@@ -1,0 +1,5 @@
+.DS_Store
+node_modules/
+generation_log.json
+scripts/
+*.py
