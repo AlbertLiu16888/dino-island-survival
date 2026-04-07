@@ -242,53 +242,115 @@ const SpriteGen = {
 
     // ===== Character Sprites =====
 
-    generatePlayer(scene) {
+    // 6 player character skins
+    PLAYER_SKINS: [
+        { id:'hunter',  name:'獵人',   body:'#5D4037', belt:'#795548', legs:'#3E2723', boots:'#4E342E', arms:'#8D6E63', skin:'#FFCC80', hair:'#3E2723', hairStyle:'short', acc:null },
+        { id:'warrior', name:'戰士',   body:'#B71C1C', belt:'#D32F2F', legs:'#4E342E', boots:'#3E2723', arms:'#FFAB91', skin:'#FFCC80', hair:'#212121', hairStyle:'mohawk', acc:'scar' },
+        { id:'scout',   name:'斥候',   body:'#1B5E20', belt:'#4CAF50', legs:'#2E7D32', boots:'#1B5E20', arms:'#A1887F', skin:'#D7CCC8', hair:'#FF8F00', hairStyle:'ponytail', acc:null },
+        { id:'mage',    name:'學者',   body:'#283593', belt:'#5C6BC0', legs:'#1A237E', boots:'#0D47A1', arms:'#90A4AE', skin:'#FFF3E0', hair:'#9E9E9E', hairStyle:'long', acc:'glasses' },
+        { id:'pirate',  name:'海盜',   body:'#4E342E', belt:'#FF6F00', legs:'#3E2723', boots:'#212121', arms:'#8D6E63', skin:'#FFCC80', hair:'#1B1B1B', hairStyle:'bandana', acc:'eyepatch' },
+        { id:'maiden',  name:'少女',   body:'#AD1457', belt:'#F48FB1', legs:'#880E4F', boots:'#C2185B', arms:'#FFAB91', skin:'#FFE0B2', hair:'#5D4037', hairStyle:'twintail', acc:'ribbon' },
+    ],
+
+    generatePlayerSkin(scene, skinIdx) {
+        const skin = this.PLAYER_SKINS[skinIdx] || this.PLAYER_SKINS[0];
         const S = 32, c = document.createElement('canvas');
         c.width = S; c.height = S;
         const ctx = c.getContext('2d');
+        const key = 'sprite_player_' + skinIdx;
 
         // Shadow
         ctx.fillStyle = 'rgba(0,0,0,0.2)';
         ctx.beginPath(); ctx.ellipse(S/2, S-2, 8, 3, 0, 0, Math.PI*2); ctx.fill();
-
         // Body
-        ctx.fillStyle = '#5D4037';
+        ctx.fillStyle = skin.body;
         ctx.fillRect(S/2-5, S*0.35, 10, 14);
-
         // Belt
-        ctx.fillStyle = '#795548';
+        ctx.fillStyle = skin.belt;
         ctx.fillRect(S/2-6, S*0.55, 12, 3);
-
         // Legs
-        ctx.fillStyle = '#3E2723';
+        ctx.fillStyle = skin.legs;
         ctx.fillRect(S/2-5, S*0.6, 4, 10);
         ctx.fillRect(S/2+1, S*0.6, 4, 10);
-
         // Boots
-        ctx.fillStyle = '#4E342E';
+        ctx.fillStyle = skin.boots;
         ctx.fillRect(S/2-6, S*0.85, 5, 3);
         ctx.fillRect(S/2+1, S*0.85, 5, 3);
-
         // Arms
-        ctx.fillStyle = '#8D6E63';
+        ctx.fillStyle = skin.arms;
         ctx.fillRect(S/2-8, S*0.38, 3, 10);
         ctx.fillRect(S/2+5, S*0.38, 3, 10);
-
         // Head
-        ctx.fillStyle = '#FFCC80';
+        ctx.fillStyle = skin.skin;
         ctx.beginPath(); ctx.arc(S/2, S*0.25, 6, 0, Math.PI*2); ctx.fill();
 
-        // Hair
-        ctx.fillStyle = '#3E2723';
-        ctx.beginPath(); ctx.arc(S/2, S*0.22, 6, Math.PI, 2*Math.PI); ctx.fill();
-        ctx.fillRect(S/2-6, S*0.18, 12, 3);
+        // Hair styles
+        ctx.fillStyle = skin.hair;
+        if(skin.hairStyle==='short'){
+            ctx.beginPath(); ctx.arc(S/2, S*0.22, 6, Math.PI, 2*Math.PI); ctx.fill();
+            ctx.fillRect(S/2-6, S*0.18, 12, 3);
+        }else if(skin.hairStyle==='mohawk'){
+            ctx.fillRect(S/2-2, S*0.08, 4, 8);
+            ctx.fillRect(S/2-3, S*0.12, 6, 4);
+        }else if(skin.hairStyle==='ponytail'){
+            ctx.beginPath(); ctx.arc(S/2, S*0.22, 6, Math.PI, 2*Math.PI); ctx.fill();
+            ctx.fillRect(S/2+4, S*0.20, 3, 12);
+        }else if(skin.hairStyle==='long'){
+            ctx.beginPath(); ctx.arc(S/2, S*0.22, 7, Math.PI*0.8, Math.PI*2.2); ctx.fill();
+            ctx.fillRect(S/2-7, S*0.22, 3, 10);
+            ctx.fillRect(S/2+4, S*0.22, 3, 10);
+        }else if(skin.hairStyle==='bandana'){
+            ctx.fillStyle = '#D32F2F';
+            ctx.fillRect(S/2-7, S*0.16, 14, 4);
+            ctx.fillStyle = skin.hair;
+            ctx.beginPath(); ctx.arc(S/2, S*0.15, 5, Math.PI, 2*Math.PI); ctx.fill();
+        }else if(skin.hairStyle==='twintail'){
+            ctx.beginPath(); ctx.arc(S/2, S*0.22, 6, Math.PI, 2*Math.PI); ctx.fill();
+            ctx.fillRect(S/2-7, S*0.22, 3, 12);
+            ctx.fillRect(S/2+4, S*0.22, 3, 12);
+            ctx.beginPath(); ctx.arc(S/2-6, S*0.46, 3, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(S/2+6, S*0.46, 3, 0, Math.PI*2); ctx.fill();
+        }
 
         // Eyes
         ctx.fillStyle = '#000';
         ctx.fillRect(S/2-3, S*0.23, 2, 2);
         ctx.fillRect(S/2+1, S*0.23, 2, 2);
 
+        // Accessories
+        if(skin.acc==='scar'){
+            ctx.strokeStyle='#B71C1C';ctx.lineWidth=1;
+            ctx.beginPath();ctx.moveTo(S/2-4,S*0.20);ctx.lineTo(S/2+2,S*0.30);ctx.stroke();
+        }else if(skin.acc==='glasses'){
+            ctx.strokeStyle='#FFD54F';ctx.lineWidth=1;
+            ctx.strokeRect(S/2-4,S*0.22,3,3);ctx.strokeRect(S/2+1,S*0.22,3,3);
+            ctx.beginPath();ctx.moveTo(S/2-1,S*0.23);ctx.lineTo(S/2+1,S*0.23);ctx.stroke();
+        }else if(skin.acc==='eyepatch'){
+            ctx.fillStyle='#212121';
+            ctx.fillRect(S/2+1,S*0.22,3,3);
+            ctx.strokeStyle='#212121';ctx.lineWidth=1;
+            ctx.beginPath();ctx.moveTo(S/2+2,S*0.16);ctx.lineTo(S/2+2,S*0.23);ctx.stroke();
+        }else if(skin.acc==='ribbon'){
+            ctx.fillStyle='#E91E63';
+            ctx.beginPath();ctx.moveTo(S/2,S*0.13);ctx.lineTo(S/2-4,S*0.08);ctx.lineTo(S/2,S*0.11);ctx.lineTo(S/2+4,S*0.08);ctx.closePath();ctx.fill();
+        }
+
+        if(scene.textures.exists(key)) scene.textures.remove(key);
+        scene.textures.addCanvas(key, c);
+        return key;
+    },
+
+    generatePlayer(scene) {
+        // Generate default skin (index 0) as sprite_player for backward compat
+        this.generatePlayerSkin(scene, 0);
+        const c0 = scene.textures.get('sprite_player_0').getSourceImage();
+        const c = document.createElement('canvas');
+        c.width = c0.width; c.height = c0.height;
+        c.getContext('2d').drawImage(c0, 0, 0);
+        if(scene.textures.exists('sprite_player')) scene.textures.remove('sprite_player');
         scene.textures.addCanvas('sprite_player', c);
+        // Generate all 6 skins
+        for(let i=1; i<6; i++) this.generatePlayerSkin(scene, i);
     },
 
     // ===== Dino Sprites =====

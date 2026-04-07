@@ -39,41 +39,74 @@ class MenuScene extends Phaser.Scene {
     constructor() { super('Menu'); }
     create() {
         const w = this.cameras.main.width, h = this.cameras.main.height;
+        this.selectedSkin=0;this.playerName='';this.nextTarget=null;
         if (this.textures.exists('tile_grass'))
             for (let ty=0;ty<Math.ceil(h/64);ty++) for(let tx=0;tx<Math.ceil(w/64);tx++)
                 this.add.image(tx*64+32,ty*64+32,'tile_grass').setAlpha(0.3);
         this.add.rectangle(0,0,w,h,0x0a1a0a,0.6).setOrigin(0);
-        this.add.text(w/2,h*0.15,'🦖',{fontSize:Math.min(60,w*0.15)+'px'}).setOrigin(0.5);
-        this.add.text(w/2,h*0.27,'恐龍島求生記',{fontSize:Math.min(36,w*0.08)+'px',fill:'#A8D08D',fontFamily:'Arial',fontStyle:'bold',stroke:'#1B5E20',strokeThickness:4}).setOrigin(0.5);
-        this.add.text(w/2,h*0.33,'DINO ISLAND SURVIVAL',{fontSize:Math.min(14,w*0.035)+'px',fill:'#66BB6A',fontFamily:'Arial'}).setOrigin(0.5);
-        this.add.text(w/2,h*0.39,'🎯 任務: 在恐龍島上存活 10 天!',{fontSize:Math.min(14,w*0.035)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.08,'🦖',{fontSize:Math.min(48,w*0.12)+'px'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.17,'恐龍島求生記',{fontSize:Math.min(32,w*0.07)+'px',fill:'#A8D08D',fontFamily:'Arial',fontStyle:'bold',stroke:'#1B5E20',strokeThickness:4}).setOrigin(0.5);
+        this.add.text(w/2,h*0.22,'🎯 在恐龍島上存活 10 天!',{fontSize:Math.min(13,w*0.032)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
 
-        const tileKeys=['tile_camp','tile_grass','tile_forest','tile_swamp','tile_volcano'];
-        const biomeLabels=['營地','草原','森林','沼澤','火山'];
-        const pw=Math.min(55,w*0.13),gap=6,totalW=tileKeys.length*pw+(tileKeys.length-1)*gap,startX=w/2-totalW/2+pw/2;
-        tileKeys.forEach((key,i)=>{
-            if(this.textures.exists(key)){this.add.image(startX+i*(pw+gap),h*0.49,key).setDisplaySize(pw,pw).setAlpha(0.85);
-            this.add.rectangle(startX+i*(pw+gap),h*0.49,pw+2,pw+2).setStrokeStyle(1,0x4CAF50).setFillStyle(0,0);}
-            this.add.text(startX+i*(pw+gap),h*0.49+pw*0.55,biomeLabels[i],{fontSize:'9px',fill:'#aaa',fontFamily:'Arial'}).setOrigin(0.5);
+        // ===== Character Selection =====
+        this.add.text(w/2,h*0.28,'選擇角色',{fontSize:'16px',fill:'#81C784',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+        const skins=SpriteGen.PLAYER_SKINS;
+        const cw=Math.min(52,w*0.13),cgap=8,ctotalW=skins.length*cw+(skins.length-1)*cgap,cstartX=w/2-ctotalW/2+cw/2;
+        this.skinBorders=[];this.skinPreviews=[];
+        skins.forEach((skin,i)=>{
+            const cx=cstartX+i*(cw+cgap),cy=h*0.37;
+            const border=this.add.rectangle(cx,cy,cw+4,cw+4,0x000000,0).setStrokeStyle(i===0?3:1,i===0?0x4CAF50:0x555555);
+            const sk='sprite_player_'+i;
+            if(this.textures.exists(sk)){
+                const img=this.add.image(cx,cy,sk).setDisplaySize(cw-6,cw-6);
+                this.skinPreviews.push(img);
+            }
+            this.add.text(cx,cy+cw/2+10,skin.name,{fontSize:'10px',fill:i===0?'#4CAF50':'#888',fontFamily:'Arial'}).setOrigin(0.5);
+            border.setInteractive({useHandCursor:true}).on('pointerdown',()=>{
+                AudioMgr.playClick();this.selectedSkin=i;
+                this.skinBorders.forEach((b,j)=>b.setStrokeStyle(j===i?3:1,j===i?0x4CAF50:0x555555));
+            });
+            this.skinBorders.push(border);
         });
-        const dinoKeys=['sprite_dino_raptor','sprite_dino_trike','sprite_dino_trex','sprite_dino_spino','sprite_dino_stego'];
-        const dw=Math.min(45,w*0.10),dTotalW=dinoKeys.length*dw+(dinoKeys.length-1)*gap,dStartX=w/2-dTotalW/2+dw/2;
-        dinoKeys.forEach((key,i)=>{if(this.textures.exists(key)){const img=this.add.image(dStartX+i*(dw+gap),h*0.62,key);img.setScale(Math.min(dw/img.width,dw/img.height));}});
 
-        const btnW=Math.min(220,w*0.55),btnH=48;
-        const soloBtn=this.add.rectangle(w/2,h*0.72,btnW,btnH,0x2E7D32,0.9).setInteractive({useHandCursor:true});
-        this.add.text(w/2,h*0.72,'🎮 單人冒險',{fontSize:'20px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+        // ===== Name Input =====
+        this.add.text(w/2,h*0.50,'玩家名稱:',{fontSize:'14px',fill:'#81C784',fontFamily:'Arial'}).setOrigin(0.5);
+        const nameBoxW=Math.min(200,w*0.5);
+        this.add.rectangle(w/2,h*0.56,nameBoxW,36,0x222222,0.9).setStrokeStyle(1,0x4CAF50);
+        this.nameDisplay=this.add.text(w/2,h*0.56,'點擊輸入名稱',{fontSize:'14px',fill:'#666',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.rectangle(w/2,h*0.56,nameBoxW,36,0x000000,0).setInteractive({useHandCursor:true}).on('pointerdown',()=>{
+            const n=prompt('輸入玩家名稱 (最多8字):','探險家');
+            if(n){this.playerName=n.substring(0,8);this.nameDisplay.setText(this.playerName).setColor('#fff');}
+        });
+
+        // ===== Play Buttons =====
+        const btnW=Math.min(220,w*0.55),btnH=44;
+        const soloBtn=this.add.rectangle(w/2,h*0.66,btnW,btnH,0x2E7D32,0.9).setInteractive({useHandCursor:true});
+        this.add.text(w/2,h*0.66,'🎮 單人冒險',{fontSize:'18px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
         soloBtn.on('pointerover',()=>soloBtn.setFillStyle(0x388E3C));soloBtn.on('pointerout',()=>soloBtn.setFillStyle(0x2E7D32));
-        soloBtn.on('pointerdown',()=>{AudioMgr.resume();AudioMgr.playClick();this.scene.start('Game',{multi:false});});
+        soloBtn.on('pointerdown',()=>{AudioMgr.resume();AudioMgr.playClick();
+            const name=this.playerName||'探險家';
+            this.scene.start('Game',{multi:false,skinIdx:this.selectedSkin,playerName:name});});
 
-        const multiBtn=this.add.rectangle(w/2,h*0.80,btnW,btnH,0x1565C0,0.9).setInteractive({useHandCursor:true});
-        this.add.text(w/2,h*0.80,'👥 多人連線',{fontSize:'20px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+        const multiBtn=this.add.rectangle(w/2,h*0.74,btnW,btnH,0x1565C0,0.9).setInteractive({useHandCursor:true});
+        this.add.text(w/2,h*0.74,'👥 多人連線',{fontSize:'18px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
         multiBtn.on('pointerover',()=>multiBtn.setFillStyle(0x1976D2));multiBtn.on('pointerout',()=>multiBtn.setFillStyle(0x1565C0));
-        multiBtn.on('pointerdown',()=>{AudioMgr.resume();AudioMgr.playClick();this.scene.start('Lobby');});
+        multiBtn.on('pointerdown',()=>{AudioMgr.resume();AudioMgr.playClick();
+            const name=this.playerName||'探險家';
+            this.scene.start('Lobby',{skinIdx:this.selectedSkin,playerName:name});});
 
         const isMobile=this.sys.game.device.input.touch;
-        this.add.text(w/2,h*0.88,isMobile?'觸控搖桿移動 | 點擊按鈕操作':'WASD移動 | 空白鍵攻擊 | E採集 | I背包 | C合成',{fontSize:Math.min(12,w*0.03)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
-        this.add.text(w/2,h*0.94,'v3.0 — 10天生存 | 真實多人連線',{fontSize:'11px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.82,isMobile?'觸控搖桿移動 | 點擊按鈕操作':'WASD移動 | 空白鍵攻擊 | E採集 | I背包 | C合成',{fontSize:Math.min(11,w*0.028)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
+
+        // Biome previews (compact row)
+        const tileKeys=['tile_camp','tile_grass','tile_forest','tile_swamp','tile_volcano'];
+        const biomeLabels=['營地','草原','森林','沼澤','火山'];
+        const pw=Math.min(36,w*0.08),gap=4,totalW=tileKeys.length*pw+(tileKeys.length-1)*gap,startX=w/2-totalW/2+pw/2;
+        tileKeys.forEach((key,i)=>{
+            if(this.textures.exists(key))this.add.image(startX+i*(pw+gap),h*0.89,key).setDisplaySize(pw,pw).setAlpha(0.7);
+            this.add.text(startX+i*(pw+gap),h*0.89+pw*0.6,biomeLabels[i],{fontSize:'8px',fill:'#777',fontFamily:'Arial'}).setOrigin(0.5);
+        });
+        this.add.text(w/2,h*0.97,'v3.1 — 10天生存 | 角色選擇 | 真實多人連線',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
     }
 }
 
@@ -82,7 +115,9 @@ class MenuScene extends Phaser.Scene {
 // ============================================
 class LobbyScene extends Phaser.Scene {
     constructor(){super('Lobby');}
-    create(){
+    create(data){
+        this._skinIdx=data?.skinIdx||0;
+        this._playerName=data?.playerName||'探險家';
         const w=this.cameras.main.width,h=this.cameras.main.height;
         this.add.rectangle(0,0,w,h,0x0a1a0a).setOrigin(0);
         this.add.text(w/2,h*0.05,'👥 多人連線大廳',{fontSize:'22px',fill:'#42A5F5',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:3}).setOrigin(0.5);
@@ -142,14 +177,14 @@ class LobbyScene extends Phaser.Scene {
         };
         NetMgr.onStartGame=(data)=>{
             // Client receives start signal
-            this.scene.start('Game',{multi:true,isHost:false,mapSeed:data.seed});
+            this.scene.start('Game',{multi:true,isHost:false,mapSeed:data.seed,skinIdx:this._skinIdx,playerName:this._playerName});
         };
     }
 
     async doCreateRoom(){
         this.statusTxt.setText('正在建立房間...').setColor('#FFD54F');
         try{
-            NetMgr.playerName='玩家1';
+            NetMgr.playerName=this._playerName;
             const code=await NetMgr.createRoom();
             this.codeTxt.setText(`房間代碼: ${code}`);
             this.codeBg.setStrokeStyle(2,0x4CAF50);
@@ -166,7 +201,7 @@ class LobbyScene extends Phaser.Scene {
         if(!code||code.length!==6){this.showMsg('代碼必須為6位','#FF5252');return;}
         this.statusTxt.setText('正在連線...').setColor('#FFD54F');
         try{
-            NetMgr.playerName='玩家'+(Math.floor(Math.random()*99)+2);
+            NetMgr.playerName=this._playerName;
             await NetMgr.joinRoom(code);
             this.codeTxt.setText(`已加入房間: ${code.toUpperCase()}`);
             this.codeBg.setStrokeStyle(2,0x4CAF50);
@@ -226,7 +261,7 @@ class LobbyScene extends Phaser.Scene {
                 AudioMgr.playClick();
                 const seed=Date.now();
                 NetMgr.sendStartGame({seed});
-                this.scene.start('Game',{multi:true,isHost:true,mapSeed:seed});
+                this.scene.start('Game',{multi:true,isHost:true,mapSeed:seed,skinIdx:this._skinIdx,playerName:this._playerName});
             });
         }else{
             this.startBtn.setFillStyle(0x333333,0.5).removeInteractive();
@@ -246,6 +281,8 @@ class GameScene extends Phaser.Scene {
         this.isMulti=data?.multi||false;
         this.isHost=data?.isHost!==false;
         this.mapSeed=data?.mapSeed||Date.now();
+        this.skinIdx=data?.skinIdx||0;
+        this.myName=data?.playerName||'探險家';
 
         this.mapData=[];this.resources=[];this.dinos=[];this.campfires=[];this.traps=[];this.arrows=[];
         this.gameTime=0;this.dayPhase=D.DAY_NIGHT.PHASES.DAY;this.dayTimer=0;
@@ -591,7 +628,9 @@ class GameScene extends Phaser.Scene {
     // ===== Player =====
     createPlayer(){
         const cx=MW/2,cy=MH/2;
-        this.player=this.textures.exists('sprite_player')?this.add.image(cx,cy,'sprite_player').setDepth(10):this.add.rectangle(cx,cy,TILE*0.8,TILE*0.8,0x8D6E63).setDepth(10);
+        const skinKey='sprite_player_'+this.skinIdx;
+        const useKey=this.textures.exists(skinKey)?skinKey:(this.textures.exists('sprite_player')?'sprite_player':null);
+        this.player=useKey?this.add.image(cx,cy,useKey).setDepth(10):this.add.rectangle(cx,cy,TILE*0.8,TILE*0.8,0x8D6E63).setDepth(10);
         const pScale=(TILE*1.2)/Math.max(this.player.width,this.player.height);this.player.setScale(pScale);
         this.physics.add.existing(this.player);this.player.body.setCollideWorldBounds(true);
         const bs=TILE*0.6;this.player.body.setSize(bs,bs);this.player.body.setOffset((this.player.width-bs)/2,(this.player.height-bs)/2);
@@ -602,6 +641,8 @@ class GameScene extends Phaser.Scene {
             speed:D.PLAYER.SPEED,sprinting:false,inventory:[],equipped:{weapon:null,armor:null},
             facing:{x:0,y:1},alive:true,baseScale:pScale,invincible:false,poisoned:false,poisonTimer:null,lightRadius:0,torchActive:false});
         this.addItem('wood',5);this.addItem('stone',3);this.addItem('herb',3);this.addItem('fruit',5);
+        // Player name above character
+        this.playerNameTxt=this.add.text(cx,cy-22,this.myName,{fontSize:'11px',fill:'#A8D08D',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setDepth(11);
     }
 
     // ===== Resources =====
@@ -854,6 +895,7 @@ class GameScene extends Phaser.Scene {
         }
 
         if(this.playerShadow)this.playerShadow.setPosition(this.player.x,this.player.y+12);
+        if(this.playerNameTxt)this.playerNameTxt.setPosition(this.player.x,this.player.y-22);
         if(this.torchLight&&this.player.torchActive)this.torchLight.setPosition(this.player.x,this.player.y);
         if(this.player.facing.x<0&&this.player.setFlipX)this.player.setFlipX(true);
         else if(this.player.facing.x>0&&this.player.setFlipX)this.player.setFlipX(false);
@@ -937,8 +979,8 @@ class GameScene extends Phaser.Scene {
     updateDinoAI(delta){
         const p=this.player,isNight=this.dayPhase===D.DAY_NIGHT.PHASES.NIGHT,inCamp=this.isInCamp(p.x,p.y);
         // Find nearest player for each dino (host + remotes)
-        const allPlayers=[{x:p.x,y:p.y,alive:p.alive}];
-        this.remotePlayers.forEach(rp=>{if(rp.alive)allPlayers.push({x:rp.sprite.x,y:rp.sprite.y,alive:true});});
+        const allPlayers=[{x:p.x,y:p.y,alive:p.alive,isLocal:true}];
+        this.remotePlayers.forEach(rp=>{if(rp.alive)allPlayers.push({x:rp.sprite.x,y:rp.sprite.y,alive:true,isLocal:false});});
 
         this.dinos.forEach(dino=>{
             if(!dino.alive)return;
@@ -971,8 +1013,8 @@ class GameScene extends Phaser.Scene {
                     dino.body.setVelocity(0,0);
                     dino.attackCd-=delta;
                     if(dino.attackCd<=0){
-                        // Damage nearest player (could be remote)
-                        if(nearP===p||nearP===this.player){
+                        // Damage nearest player
+                        if(nearP.isLocal){
                             this.damagePlayer(data.atk*nightMult);
                             if(data.poison&&!p.poisoned){p.poisoned=true;this.showFloatingText(p.x,p.y-35,'中毒!','#9C27B0');AudioMgr.playPoison();
                                 p.poisonTimer=this.time.addEvent({delay:1000,repeat:5,callback:()=>{if(p.alive&&p.poisoned)this.damagePlayer(2,'毒');}});
@@ -1137,11 +1179,6 @@ class UIScene extends Phaser.Scene {
         this.add.text(btnR,btnBot+35,'合成',{fontSize:'10px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
         craftBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleCrafting();});
 
-        // Gather button (dedicated, left of main)
-        const gatherBtn=this.add.circle(btnR-70,btnBot-55,28,0x2E7D32,0.8).setStrokeStyle(2,0xFFFFFF,0.4).setScrollFactor(0).setDepth(115).setInteractive();
-        this.add.text(btnR-70,btnBot-55,'🪓',{fontSize:'24px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
-        this.add.text(btnR-70,btnBot-28,'採集',{fontSize:'10px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
-        gatherBtn.on('pointerdown',()=>{AudioMgr.resume();this.gs.gather();});
     }
 
     toggleInventory(){this.showInv=!this.showInv;this.showCraft=false;this.craftPanel.setVisible(false);if(this.showInv)this.buildInventoryPanel();this.invPanel.setVisible(this.showInv);}
