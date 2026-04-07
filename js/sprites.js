@@ -446,6 +446,60 @@ const SpriteGen = {
         scene.textures.addCanvas('sprite_campfire', c);
     },
 
+    generateTrap(scene) {
+        const S = 32, c = document.createElement('canvas');
+        c.width = S; c.height = S;
+        const ctx = c.getContext('2d');
+        // Spikes ring
+        ctx.strokeStyle = '#795548'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(S/2, S/2, 10, 0, Math.PI*2); ctx.stroke();
+        // Spikes
+        for (let a = 0; a < 8; a++) {
+            const rad = (a/8)*Math.PI*2;
+            const ix = S/2+Math.cos(rad)*7, iy = S/2+Math.sin(rad)*7;
+            const ox = S/2+Math.cos(rad)*13, oy = S/2+Math.sin(rad)*13;
+            ctx.fillStyle = '#9E9E9E';
+            ctx.beginPath(); ctx.moveTo(ix-2,iy); ctx.lineTo(ox,oy); ctx.lineTo(ix+2,iy); ctx.closePath(); ctx.fill();
+        }
+        // Center
+        ctx.fillStyle = '#5D4037'; ctx.beginPath(); ctx.arc(S/2,S/2,4,0,Math.PI*2); ctx.fill();
+        scene.textures.addCanvas('sprite_trap', c);
+    },
+
+    generateTorch(scene) {
+        const S = 32, c = document.createElement('canvas');
+        c.width = S; c.height = S;
+        const ctx = c.getContext('2d');
+        // Stick
+        ctx.fillStyle = '#5D4037'; ctx.fillRect(S/2-2, S*0.35, 4, S*0.55);
+        // Flame
+        ctx.fillStyle = '#FF6D00';
+        ctx.beginPath(); ctx.moveTo(S/2-5,S*0.38); ctx.quadraticCurveTo(S/2-3,S*0.12,S/2,S*0.05);
+        ctx.quadraticCurveTo(S/2+3,S*0.12,S/2+5,S*0.38); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#FFAB00';
+        ctx.beginPath(); ctx.moveTo(S/2-2,S*0.35); ctx.quadraticCurveTo(S/2,S*0.12,S/2+2,S*0.35); ctx.closePath(); ctx.fill();
+        // Glow
+        const grad = ctx.createRadialGradient(S/2,S*0.25,2,S/2,S*0.25,12);
+        grad.addColorStop(0,'rgba(255,160,0,0.3)'); grad.addColorStop(1,'rgba(255,80,0,0)');
+        ctx.fillStyle = grad; ctx.fillRect(0,0,S,S);
+        scene.textures.addCanvas('sprite_torch', c);
+    },
+
+    generateArrow(scene) {
+        const S = 16, c = document.createElement('canvas');
+        c.width = S; c.height = S;
+        const ctx = c.getContext('2d');
+        // Shaft
+        ctx.fillStyle = '#8D6E63'; ctx.fillRect(2, S/2-1, S-4, 2);
+        // Head
+        ctx.fillStyle = '#9E9E9E';
+        ctx.beginPath(); ctx.moveTo(S-2,S/2); ctx.lineTo(S-6,S/2-3); ctx.lineTo(S-6,S/2+3); ctx.closePath(); ctx.fill();
+        // Fletching
+        ctx.fillStyle = '#E0E0E0';
+        ctx.beginPath(); ctx.moveTo(2,S/2-3); ctx.lineTo(5,S/2); ctx.lineTo(2,S/2+3); ctx.closePath(); ctx.fill();
+        scene.textures.addCanvas('sprite_arrow', c);
+    },
+
     // Generate all sprites
     generateAll(scene) {
         this.generateTree(scene);
@@ -456,6 +510,9 @@ const SpriteGen = {
         this.generateFruit(scene);
         this.generatePlayer(scene);
         this.generateCampfire(scene);
+        this.generateTrap(scene);
+        this.generateTorch(scene);
+        this.generateArrow(scene);
 
         // Dino sprites
         const dinoConfigs = {
