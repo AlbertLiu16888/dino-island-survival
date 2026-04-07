@@ -1,4 +1,4 @@
-// ===== 恐龍島求生記 — 主遊戲引擎 v1.1 (使用實際圖片素材) =====
+// ===== 恐龍島求生記 — 主遊戲引擎 v2.0 (程式化紋理+Canvas繪圖精靈) =====
 const D = GAME_DATA;
 const TILE = D.MAP.TILE_SIZE;
 const MW = D.MAP.WIDTH * TILE;
@@ -10,134 +10,120 @@ const rnd = (a, b) => Math.random() * (b - a) + a;
 const rndInt = (a, b) => Math.floor(rnd(a, b + 1));
 const pick = arr => arr[rndInt(0, arr.length - 1)];
 
-// Dino key → sprite asset mapping
-const DINO_SPRITES = {
-    raptor: 'dino_velociraptor', oviraptor: 'dino_oviraptor', trike: 'dino_triceratops',
-    stego: 'dino_stegosaurus', dilopho: 'dino_dilophosaurus', allo: 'dino_allosaurus',
-    trex: 'dino_trex', spino: 'dino_spinosaurus'
+// Resource → sprite key mapping
+const RES_SPRITES = { wood: 'sprite_wood', stone: 'sprite_stone', herb: 'sprite_herb', iron: 'sprite_iron', fruit: 'sprite_fruit' };
+const DINO_SPRITE_KEYS = {
+    raptor: 'sprite_dino_raptor', oviraptor: 'sprite_dino_oviraptor', trike: 'sprite_dino_trike',
+    stego: 'sprite_dino_stego', dilopho: 'sprite_dino_dilopho', allo: 'sprite_dino_allo',
+    trex: 'sprite_dino_trex', spino: 'sprite_dino_spino'
 };
-// Resource key → visual emoji+color fallback
-const RES_ICONS = { wood: '🪵', stone: '🪨', herb: '🌿', iron: '⛏', fruit: '🍇' };
 
 // ============================================
-// Boot Scene — load assets
+// Boot Scene — generate all programmatic assets
 // ============================================
 class BootScene extends Phaser.Scene {
     constructor() { super('Boot'); }
     preload() {
         const w = this.cameras.main.width, h = this.cameras.main.height;
-        const bar = this.add.rectangle(w/2, h/2, w*0.6, 20, 0x2F5233).setOrigin(0.5);
+        this.add.rectangle(w/2, h/2, w*0.6, 20, 0x2F5233).setOrigin(0.5);
         const fill = this.add.rectangle(w/2 - w*0.3, h/2, 0, 16, 0x4CAF50).setOrigin(0, 0.5);
-        const txt = this.add.text(w/2, h/2-40, '載入中...', {fontSize:'18px',fill:'#A8D08D',fontFamily:'Arial'}).setOrigin(0.5);
+        const txt = this.add.text(w/2, h/2-40, '生成紋理中...', {fontSize:'18px',fill:'#A8D08D',fontFamily:'Arial'}).setOrigin(0.5);
         this.load.on('progress', v => { fill.width = w*0.6*v; });
         this.load.on('complete', () => { txt.setText('完成!'); });
 
-        const base = 'assets/';
-        ['camp','grassland','forest','swamp','volcano','cave','bay','highland','temple','river','night_overlay','dusk_overlay'].forEach(s =>
-            this.load.image('scene_'+s, base+'scenes/scene_'+s+'.png'));
-        ['grass','forest','swamp','volcano','cave'].forEach(t =>
-            this.load.image('tiles_'+t, base+'tiles/tiles_'+t+'.png'));
-        ['base','attack','armor_grass','armor_leather','armor_iron','armor_steel','death'].forEach(c =>
-            this.load.image('player_'+c, base+'characters/player_'+c+'.png'));
-        ['velociraptor','oviraptor','archaeopteryx','dilophosaurus','deinonychus',
-         'triceratops','ankylosaurus','parasaurolophus','pachycephalosaurus','stegosaurus',
-         'pteranodon','trex','spinosaurus','allosaurus','ceratosaurus','therizinosaurus',
-         'mosasaurus','giganotosaurus'].forEach(d =>
-            this.load.image('dino_'+d, base+'dinosaurs/dino_'+d+'.png'));
-        ['resources','weapons','armor','food','tools'].forEach(i =>
-            this.load.image('items_'+i, base+'items/items_'+i+'.png'));
-        ['hud_bars','minimap_frame','inventory','crafting','daynight_indicator',
-         'dialogue_box','lobby','leaderboard','game_logo','loading_screen','safe_zone_border'].forEach(u =>
-            this.load.image('ui_'+u, base+'ui/ui_'+u+'.png'));
-        ['campfire','slash','damage','heal','poison','arrow','dino_death','earthquake'].forEach(e =>
-            this.load.image('fx_'+e, base+'effects/fx_'+e+'.png'));
+        // Only load a placeholder so Phaser fires complete
+        this.load.once('complete', () => {});
     }
-    create() { this.scene.start('Menu'); }
+    create() {
+        // Generate all programmatic textures
+        TileGen.generateAll(this);
+        SpriteGen.generateAll(this);
+        AudioMgr.init();
+        this.scene.start('Menu');
+    }
 }
 
 // ============================================
-// Menu Scene — 使用 Logo + Loading 圖片
+// Menu Scene
 // ============================================
 class MenuScene extends Phaser.Scene {
     constructor() { super('Menu'); }
     create() {
         const w = this.cameras.main.width, h = this.cameras.main.height;
 
-        // Loading screen as background
-        if (this.textures.exists('ui_loading_screen')) {
-            const bg = this.add.image(w/2, h/2, 'ui_loading_screen');
-            bg.setDisplaySize(w, h).setAlpha(0.5);
+        // Tiled background using procedural grass
+        if (this.textures.exists('tile_grass')) {
+            for (let ty = 0; ty < Math.ceil(h/64); ty++) {
+                for (let tx = 0; tx < Math.ceil(w/64); tx++) {
+                    this.add.image(tx*64+32, ty*64+32, 'tile_grass').setAlpha(0.3);
+                }
+            }
         }
         this.add.rectangle(0, 0, w, h, 0x0a1a0a, 0.6).setOrigin(0);
 
-        // Logo image
-        if (this.textures.exists('ui_game_logo')) {
-            const logo = this.add.image(w/2, h*0.2, 'ui_game_logo');
-            const logoScale = Math.min((w*0.8) / logo.width, (h*0.2) / logo.height);
-            logo.setScale(logoScale);
-        }
-        this.add.text(w/2, h*0.38, '恐龍島求生記', {
+        this.add.text(w/2, h*0.22, '🦖', {fontSize: Math.min(60,w*0.15)+'px'}).setOrigin(0.5);
+        this.add.text(w/2, h*0.36, '恐龍島求生記', {
             fontSize: Math.min(36,w*0.08)+'px', fill:'#A8D08D',
             fontFamily:'Arial', fontStyle:'bold', stroke:'#1B5E20', strokeThickness:4
         }).setOrigin(0.5);
-        this.add.text(w/2, h*0.44, 'DINO ISLAND SURVIVAL', {
+        this.add.text(w/2, h*0.42, 'DINO ISLAND SURVIVAL', {
             fontSize: Math.min(14,w*0.035)+'px', fill:'#66BB6A', fontFamily:'Arial'
         }).setOrigin(0.5);
 
-        // Scene preview thumbnails
-        const previewKeys = ['scene_camp','scene_grassland','scene_forest','scene_swamp','scene_volcano'];
+        // Biome preview tiles
+        const tileKeys = ['tile_camp','tile_grass','tile_forest','tile_swamp','tile_volcano'];
+        const biomeLabels = ['營地','草原','森林','沼澤','火山'];
         const pw = Math.min(60, w*0.14), gap = 8;
-        const totalW = previewKeys.length * pw + (previewKeys.length-1) * gap;
+        const totalW = tileKeys.length * pw + (tileKeys.length-1) * gap;
         const startX = w/2 - totalW/2 + pw/2;
-        previewKeys.forEach((key, i) => {
+        tileKeys.forEach((key, i) => {
             if (this.textures.exists(key)) {
                 const img = this.add.image(startX + i*(pw+gap), h*0.52, key);
-                img.setDisplaySize(pw, pw*0.6);
-                img.setAlpha(0.85);
-                // Border
-                this.add.rectangle(startX + i*(pw+gap), h*0.52, pw+2, pw*0.6+2).setStrokeStyle(1, 0x4CAF50).setFillStyle(0,0);
+                img.setDisplaySize(pw, pw).setAlpha(0.85);
+                this.add.rectangle(startX + i*(pw+gap), h*0.52, pw+2, pw+2).setStrokeStyle(1, 0x4CAF50).setFillStyle(0,0);
             }
-        });
-        const biomeLabels = ['營地','草原','森林','沼澤','火山'];
-        biomeLabels.forEach((lbl, i) => {
-            this.add.text(startX + i*(pw+gap), h*0.52 + pw*0.35, lbl, {
-                fontSize:'8px', fill:'#aaa', fontFamily:'Arial'
+            this.add.text(startX + i*(pw+gap), h*0.52 + pw*0.55, biomeLabels[i], {
+                fontSize:'9px', fill:'#aaa', fontFamily:'Arial'
             }).setOrigin(0.5);
         });
 
-        // Start button
-        const btnW = Math.min(220, w*0.55), btnH = 50;
-        const btn = this.add.rectangle(w/2, h*0.66, btnW, btnH, 0x2E7D32, 0.9).setInteractive({useHandCursor:true});
-        this.add.text(w/2, h*0.66, '開始冒險', {fontSize:'22px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
-        btn.on('pointerover', () => btn.setFillStyle(0x388E3C));
-        btn.on('pointerout', () => btn.setFillStyle(0x2E7D32));
-        btn.on('pointerdown', () => this.scene.start('Game'));
-
-        // Dino preview row
-        const dinoKeys = ['dino_velociraptor','dino_triceratops','dino_trex','dino_spinosaurus','dino_allosaurus'];
+        // Dino previews
+        const dinoKeys = ['sprite_dino_raptor','sprite_dino_trike','sprite_dino_trex','sprite_dino_spino','sprite_dino_stego'];
         const dw = Math.min(50, w*0.11);
         const dTotalW = dinoKeys.length * dw + (dinoKeys.length-1) * gap;
         const dStartX = w/2 - dTotalW/2 + dw/2;
         dinoKeys.forEach((key, i) => {
             if (this.textures.exists(key)) {
-                const img = this.add.image(dStartX + i*(dw+gap), h*0.78, key);
+                const img = this.add.image(dStartX + i*(dw+gap), h*0.68, key);
                 const s = Math.min(dw/img.width, dw/img.height);
                 img.setScale(s);
             }
         });
 
+        // Start button
+        const btnW = Math.min(220, w*0.55), btnH = 50;
+        const btn = this.add.rectangle(w/2, h*0.80, btnW, btnH, 0x2E7D32, 0.9).setInteractive({useHandCursor:true});
+        this.add.text(w/2, h*0.80, '開始冒險', {fontSize:'22px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+        btn.on('pointerover', () => btn.setFillStyle(0x388E3C));
+        btn.on('pointerout', () => btn.setFillStyle(0x2E7D32));
+        btn.on('pointerdown', () => {
+            AudioMgr.resume();
+            AudioMgr.playClick();
+            this.scene.start('Game');
+        });
+
         const isMobile = this.sys.game.device.input.touch;
         const controlText = isMobile ? '觸控搖桿移動 | 點擊按鈕攻擊/採集' : 'WASD移動 | 空白鍵攻擊 | E採集 | I背包 | C合成 | F使用物品';
-        this.add.text(w/2, h*0.87, controlText, {
+        this.add.text(w/2, h*0.89, controlText, {
             fontSize: Math.min(11,w*0.028)+'px', fill:'#81C784', fontFamily:'Arial',
             wordWrap:{width:w*0.85}, align:'center'
         }).setOrigin(0.5);
-        this.add.text(w/2, h*0.94, 'v1.1 — 1~6人生存冒險 | 66張AI美術素材', {fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.text(w/2, h*0.95, 'v2.0 — 程式化紋理 | 1~6人生存冒險', {fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
     }
 }
 
 // ============================================
-// Game Scene — 使用圖片素材渲染
+// Game Scene — 使用程式化紋理渲染
 // ============================================
 class GameScene extends Phaser.Scene {
     constructor() { super('Game'); }
@@ -163,6 +149,9 @@ class GameScene extends Phaser.Scene {
         this.setupInput();
         this.scene.launch('UI', { gameScene: this });
 
+        // Start BGM
+        AudioMgr.startBGM(0);
+
         this.time.addEvent({ delay: D.PLAYER.HUNGER_INTERVAL, callback: this.tickHunger, callbackScope: this, loop: true });
         this.time.addEvent({ delay: 500, callback: () => {
             if (!this.player.sprinting && this.player.stamina < D.PLAYER.MAX_STAMINA)
@@ -172,7 +161,7 @@ class GameScene extends Phaser.Scene {
         this.time.addEvent({ delay: 45000, callback: this.respawnDinos, callbackScope: this, loop: true });
     }
 
-    // ===== Map — 使用場景圖片鋪設 =====
+    // ===== Map — 使用程式化 tiles 無縫鋪設 =====
     generateMap() {
         const W = D.MAP.WIDTH, H = D.MAP.HEIGHT;
         const cx = W/2, cy = H/2;
@@ -195,91 +184,113 @@ class GameScene extends Phaser.Scene {
     }
 
     renderMap() {
-        // 用大張場景圖片鋪設各區域背景
-        const sceneKeys = ['scene_camp', 'scene_grassland', 'scene_forest', 'scene_swamp', 'scene_volcano'];
-        const biomeRegions = [
-            { cx: 0.5, cy: 0.5, r: 0.07, key: 'scene_camp' },
-            { cx: 0.5, cy: 0.5, r: 0.28, key: 'scene_grassland' },
-            { cx: 0.35, cy: 0.35, r: 0.22, key: 'scene_forest' },
-            { cx: 0.65, cy: 0.65, r: 0.22, key: 'scene_forest' },
-            { cx: 0.3, cy: 0.7, r: 0.18, key: 'scene_swamp' },
-            { cx: 0.7, cy: 0.3, r: 0.18, key: 'scene_swamp' },
-            { cx: 0.15, cy: 0.15, r: 0.2, key: 'scene_volcano' },
-            { cx: 0.85, cy: 0.85, r: 0.2, key: 'scene_volcano' },
-            { cx: 0.15, cy: 0.85, r: 0.15, key: 'scene_cave' },
-            { cx: 0.85, cy: 0.15, r: 0.15, key: 'scene_bay' },
-            { cx: 0.5, cy: 0.2, r: 0.12, key: 'scene_highland' },
-            { cx: 0.5, cy: 0.8, r: 0.12, key: 'scene_river' },
-            { cx: 0.5, cy: 0.5, r: 0.05, key: 'scene_temple' },
-        ];
+        // Use RenderTexture for the entire ground — seamless tile painting
+        const tileKeys = {
+            0: 'tile_camp', 1: 'tile_grass', 2: 'tile_forest',
+            3: 'tile_swamp', 4: 'tile_volcano'
+        };
+        const transKeys = {
+            '1_2': 'tile_grass_forest', '2_1': 'tile_grass_forest',
+            '1_3': 'tile_grass_swamp', '3_1': 'tile_grass_swamp',
+            '2_3': 'tile_forest_swamp', '3_2': 'tile_forest_swamp',
+            '3_4': 'tile_swamp_volcano', '4_3': 'tile_swamp_volcano',
+        };
 
-        // Base color map
-        const colors = [0x2E7D32, 0x66BB6A, 0x33691E, 0x4A148C, 0xBF360C];
-        const gfx = this.add.graphics().setDepth(0);
-        for (let y = 0; y < D.MAP.HEIGHT; y++) {
-            for (let x = 0; x < D.MAP.WIDTH; x++) {
-                const b = this.mapData[y][x];
-                const c = colors[b];
-                const v = rndInt(-8, 8);
-                const r = clamp(((c>>16)&0xFF)+v,0,255);
-                const g = clamp(((c>>8)&0xFF)+v,0,255);
-                const bl = clamp((c&0xFF)+v,0,255);
-                gfx.fillStyle((r<<16)|(g<<8)|bl);
-                gfx.fillRect(x*TILE, y*TILE, TILE, TILE);
+        // TileGen.SIZE is 64px, map TILE is 32px. Each procedural tile covers 2x2 map cells.
+        const tileSize = TileGen.SIZE; // 64
+
+        // Create RenderTexture for the full map ground
+        this.groundRT = this.add.renderTexture(0, 0, MW, MH).setOrigin(0).setDepth(0);
+
+        // Paint tiles stepping by 2 map cells (= 64px = one tile texture)
+        // For each 2x2 block, use the biome of the top-left cell
+        for (let y = 0; y < D.MAP.HEIGHT; y += 2) {
+            for (let x = 0; x < D.MAP.WIDTH; x += 2) {
+                const b = this.mapData[y]?.[x] ?? 1;
+                const key = tileKeys[b];
+                if (key && this.textures.exists(key)) {
+                    this.groundRT.draw(key, x * TILE, y * TILE);
+                }
             }
         }
 
-        // Overlay scene images on biome regions
-        biomeRegions.forEach(region => {
-            if (!this.textures.exists(region.key)) return;
-            const img = this.add.image(MW * region.cx, MH * region.cy, region.key).setDepth(1);
-            const targetW = MW * region.r * 2;
-            const targetH = MH * region.r * 2;
-            img.setDisplaySize(targetW, targetH);
-            img.setAlpha(0.7);
-        });
+        // Fill any remaining single-cell edge gaps (if map dimensions are odd)
+        if (D.MAP.WIDTH % 2 !== 0) {
+            const x = D.MAP.WIDTH - 1;
+            for (let y = 0; y < D.MAP.HEIGHT; y++) {
+                const b = this.mapData[y][x];
+                const key = tileKeys[b];
+                if (key && this.textures.exists(key)) {
+                    this.groundRT.draw(key, x * TILE, y * TILE);
+                }
+            }
+        }
+        if (D.MAP.HEIGHT % 2 !== 0) {
+            const y = D.MAP.HEIGHT - 1;
+            for (let x = 0; x < D.MAP.WIDTH; x++) {
+                const b = this.mapData[y][x];
+                const key = tileKeys[b];
+                if (key && this.textures.exists(key)) {
+                    this.groundRT.draw(key, x * TILE, y * TILE);
+                }
+            }
+        }
 
-        // Tile overlays for ground detail
-        const tileMap = { 1: 'tiles_grass', 2: 'tiles_forest', 3: 'tiles_swamp', 4: 'tiles_volcano' };
-        for (let i = 0; i < 40; i++) {
-            const bx = rndInt(3, D.MAP.WIDTH-3);
-            const by = rndInt(3, D.MAP.HEIGHT-3);
-            const biome = this.mapData[by]?.[bx];
-            const tkey = tileMap[biome];
-            if (tkey && this.textures.exists(tkey)) {
-                const tileImg = this.add.image(bx*TILE+TILE/2, by*TILE+TILE/2, tkey).setDepth(1);
-                tileImg.setDisplaySize(TILE*3, TILE*3).setAlpha(0.5);
+        // Transition blending at biome borders — overdraw transition tiles on boundary cells
+        for (let y = 0; y < D.MAP.HEIGHT; y += 2) {
+            for (let x = 0; x < D.MAP.WIDTH; x += 2) {
+                const b = this.mapData[y]?.[x];
+                if (b === undefined) continue;
+                // Check if any neighboring 2x2 block has a different biome
+                const checkOffsets = [[2,0],[-2,0],[0,2],[0,-2]];
+                for (const [ox, oy] of checkOffsets) {
+                    const nb = this.mapData[y+oy]?.[x+ox];
+                    if (nb !== undefined && nb !== b) {
+                        const tkey = transKeys[`${b}_${nb}`];
+                        if (tkey && this.textures.exists(tkey)) {
+                            this.groundRT.draw(tkey, x * TILE, y * TILE);
+                            break; // one transition per block
+                        }
+                    }
+                }
             }
         }
 
         // Camp safe zone border
         const campCx = MW/2, campCy = MH/2;
-        if (this.textures.exists('ui_safe_zone_border')) {
-            for (let angle = 0; angle < 360; angle += 20) {
-                const rad = angle * Math.PI / 180;
-                const bx = campCx + Math.cos(rad) * 5 * TILE;
-                const by = campCy + Math.sin(rad) * 5 * TILE;
-                const border = this.add.image(bx, by, 'ui_safe_zone_border').setDepth(2);
-                border.setDisplaySize(TILE*2, TILE*2).setAlpha(0.6).setAngle(angle);
-            }
-        }
-        gfx.lineStyle(2, 0xFFD54F, 0.6);
+        const gfx = this.add.graphics().setDepth(2);
+        gfx.lineStyle(2, 0xFFD54F, 0.5);
         gfx.strokeCircle(campCx, campCy, 5*TILE);
+        // Dashed effect
+        for (let angle = 0; angle < 360; angle += 10) {
+            const rad = angle * Math.PI / 180;
+            const r = 5 * TILE;
+            gfx.fillStyle(0xFFD54F, 0.15);
+            gfx.fillCircle(campCx + Math.cos(rad) * r, campCy + Math.sin(rad) * r, 3);
+        }
 
-        // 營地營火圖片
-        if (this.textures.exists('fx_campfire')) {
-            const cfImg = this.add.image(campCx, campCy, 'fx_campfire').setDepth(3);
-            cfImg.setDisplaySize(TILE*2, TILE*2);
-            this.tweens.add({ targets: cfImg, scaleX: cfImg.scaleX*1.1, scaleY: cfImg.scaleY*1.1, yoyo: true, repeat: -1, duration: 500 });
+        // Central campfire
+        if (this.textures.exists('sprite_campfire')) {
+            const cf = this.add.image(campCx, campCy, 'sprite_campfire').setDepth(3);
+            cf.setDisplaySize(TILE*2, TILE*2);
+            this.tweens.add({ targets: cf, scaleX: cf.scaleX*1.1, scaleY: cf.scaleY*1.1, yoyo: true, repeat: -1, duration: 500 });
         }
 
         this.physics.world.setBounds(0, 0, MW, MH);
     }
 
-    // ===== Player — 使用角色圖片 =====
+    // ===== Player — 使用程式化精靈 =====
     createPlayer() {
         const cx = MW/2, cy = MH/2;
-        this.player = this.add.image(cx, cy, 'player_base').setDepth(10);
+        const texKey = this.textures.exists('sprite_player') ? 'sprite_player' : null;
+
+        if (texKey) {
+            this.player = this.add.image(cx, cy, texKey).setDepth(10);
+        } else {
+            // Fallback rectangle
+            this.player = this.add.rectangle(cx, cy, TILE*0.8, TILE*0.8, 0x8D6E63).setDepth(10);
+        }
+
         const pScale = (TILE * 1.2) / Math.max(this.player.width, this.player.height);
         this.player.setScale(pScale);
         this.physics.add.existing(this.player);
@@ -287,6 +298,9 @@ class GameScene extends Phaser.Scene {
         const bodySize = TILE * 0.6;
         this.player.body.setSize(bodySize, bodySize);
         this.player.body.setOffset((this.player.width - bodySize)/2, (this.player.height - bodySize)/2);
+
+        // Shadow under player
+        this.playerShadow = this.add.ellipse(cx, cy+12, 20, 8, 0x000000, 0.2).setDepth(9);
 
         Object.assign(this.player, {
             hp: D.PLAYER.MAX_HP, maxHp: D.PLAYER.MAX_HP,
@@ -297,7 +311,7 @@ class GameScene extends Phaser.Scene {
             inventory: [], equipped: { weapon: null, armor: null },
             facing: { x: 0, y: 1 }, alive: true, baseScale: pScale,
             invincible: false, poisoned: false, poisonTimer: null,
-            lightRadius: 0, torchActive: false, currentArmor: 'player_base'
+            lightRadius: 0, torchActive: false
         });
 
         this.addItem('wood', 5);
@@ -306,26 +320,7 @@ class GameScene extends Phaser.Scene {
         this.addItem('fruit', 5);
     }
 
-    updatePlayerTexture() {
-        const p = this.player;
-        let texKey = 'player_base';
-        if (p.equipped.armor) {
-            const armorMap = {
-                grass_armor: 'player_armor_grass', leather_armor: 'player_armor_leather',
-                iron_armor: 'player_armor_iron'
-            };
-            texKey = armorMap[p.equipped.armor] || 'player_base';
-        }
-        if (texKey !== p.currentArmor && this.textures.exists(texKey)) {
-            p.setTexture(texKey);
-            const s = (TILE * 1.2) / Math.max(p.width, p.height);
-            p.setScale(s);
-            p.baseScale = s;
-            p.currentArmor = texKey;
-        }
-    }
-
-    // ===== Resources — 使用物品圖片 =====
+    // ===== Resources — 使用 Canvas 繪製精靈 =====
     spawnResources() {
         for (let y = 0; y < D.MAP.HEIGHT; y++) {
             for (let x = 0; x < D.MAP.WIDTH; x++) {
@@ -341,14 +336,35 @@ class GameScene extends Phaser.Scene {
     }
 
     createResource(type, x, y) {
-        // Use items_resources image as a tinted identifier, plus emoji text
-        const colors = { wood: 0x8D6E63, stone: 0x9E9E9E, herb: 0x4CAF50, iron: 0xB0BEC5, fruit: 0xE91E63 };
-        const r = this.add.circle(x, y, 7, colors[type] || 0xFFFFFF).setDepth(3).setAlpha(0.8);
-        // Add emoji label
-        const icon = this.add.text(x, y, RES_ICONS[type] || '?', { fontSize: '12px' }).setOrigin(0.5).setDepth(4);
+        let spriteKey = RES_SPRITES[type];
+        // Randomly use tree variant for wood
+        if (type === 'wood' && Math.random() < 0.4 && this.textures.exists('sprite_wood2')) {
+            spriteKey = 'sprite_wood2';
+        }
+
+        let r;
+        if (spriteKey && this.textures.exists(spriteKey)) {
+            r = this.add.image(x, y, spriteKey).setDepth(3);
+            // Scale to appropriate map size
+            const targetSize = type === 'wood' ? TILE * 1.4 : TILE * 1.0;
+            const s = targetSize / Math.max(r.width, r.height);
+            r.setScale(s);
+            r.baseScale = s;
+        } else {
+            // Fallback colored circle
+            const colors = { wood: 0x8D6E63, stone: 0x9E9E9E, herb: 0x4CAF50, iron: 0xB0BEC5, fruit: 0xE91E63 };
+            r = this.add.circle(x, y, 7, colors[type] || 0xFFFFFF).setDepth(3);
+        }
+
         this.physics.add.existing(r, true);
         r.type = type;
-        r.icon = icon;
+        // Gentle bob animation
+        this.tweens.add({
+            targets: r, y: y - 2,
+            yoyo: true, repeat: -1,
+            duration: 1500 + Math.random() * 1000,
+            ease: 'Sine.easeInOut'
+        });
         this.resources.push(r);
         return r;
     }
@@ -370,7 +386,7 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    // ===== Dinosaurs — 使用恐龍圖片 =====
+    // ===== Dinosaurs — 使用程式化恐龍精靈 =====
     spawnDinos() {
         for (const [key, data] of Object.entries(D.DINOS)) {
             const count = data.boss ? 1 : (data.pack || 1) * 3;
@@ -388,12 +404,12 @@ class GameScene extends Phaser.Scene {
         if (attempts >= 50) return null;
 
         const px = x*TILE+TILE/2, py = y*TILE+TILE/2;
-        const spriteKey = DINO_SPRITES[key];
+        const spriteKey = DINO_SPRITE_KEYS[key];
         let dino;
 
         if (spriteKey && this.textures.exists(spriteKey)) {
             dino = this.add.image(px, py, spriteKey).setDepth(5);
-            const targetSize = data.size * 1.8;
+            const targetSize = data.size * 1.5;
             const s = targetSize / Math.max(dino.width, dino.height);
             dino.setScale(s);
             dino.baseScale = s;
@@ -412,10 +428,13 @@ class GameScene extends Phaser.Scene {
             dino.body.setCircle(data.size/2);
         }
 
+        // Shadow
+        const shadow = this.add.ellipse(px, py + data.size*0.4, data.size*0.8, data.size*0.25, 0x000000, 0.15).setDepth(4);
+
         Object.assign(dino, {
             key, dinoData: {...data}, hp: data.hp, maxHp: data.hp,
             state: 'patrol', patrolTarget: {x: px+rnd(-100,100), y: py+rnd(-100,100)},
-            homeX: px, homeY: py, attackCd: 0, alive: true, isImage: !!spriteKey
+            homeX: px, homeY: py, attackCd: 0, alive: true, shadow
         });
 
         // HP bar
@@ -425,6 +444,15 @@ class GameScene extends Phaser.Scene {
             fontSize: data.boss?'11px':'9px', fill: data.boss?'#FFD54F':'#fff',
             fontFamily:'Arial', stroke:'#000', strokeThickness:2
         }).setOrigin(0.5).setDepth(7);
+
+        // Idle breathing animation
+        if (dino.type === 'Image') {
+            this.tweens.add({
+                targets: dino, scaleY: dino.scaleY * 1.03,
+                yoyo: true, repeat: -1, duration: 800 + Math.random()*400,
+                ease: 'Sine.easeInOut'
+            });
+        }
 
         this.dinos.push(dino);
         return dino;
@@ -504,30 +532,43 @@ class GameScene extends Phaser.Scene {
             if(def.hp) this.player.hp=Math.min(this.player.maxHp, this.player.hp+def.hp);
             if(def.cleanse&&this.player.poisoned){this.player.poisoned=false;if(this.player.poisonTimer)this.player.poisonTimer.remove();}
             this.showFloatingText(this.player.x,this.player.y-20,def.hunger?`+${def.hunger} 飽食`:`+${def.hp} HP`,'#4CAF50');
+            AudioMgr.playEat();
             item.qty--; if(item.qty<=0)this.player.inventory.splice(slot,1);
         } else if (def.type==='weapon') {
             this.player.equipped.weapon=item.id;
             this.player.atk=D.PLAYER.ATTACK_BASE+(def.atk||0);
             this.showFloatingText(this.player.x,this.player.y-20,`裝備 ${def.name}`,'#FFC107');
+            AudioMgr.playEquip();
         } else if (def.type==='armor') {
             this.player.equipped.armor=item.id;
             this.player.def=D.PLAYER.DEFENSE_BASE+(def.def||0);
-            this.updatePlayerTexture();
             this.showFloatingText(this.player.x,this.player.y-20,`裝備 ${def.name}`,'#2196F3');
+            AudioMgr.playEquip();
         } else if (item.id==='torch') {
             this.player.torchActive=true; this.player.lightRadius=def.light;
             item.qty--; if(item.qty<=0)this.player.inventory.splice(slot,1);
             this.showFloatingText(this.player.x,this.player.y-20,'點燃火把','#FF9800');
+            AudioMgr.playPlace();
             this.time.delayedCall(def.duration*1000, ()=>{this.player.torchActive=false;this.player.lightRadius=0;this.showFloatingText(this.player.x,this.player.y-20,'火把熄滅','#9E9E9E');});
         } else if (item.id==='campfire') {
             const cx=this.player.x, cy=this.player.y;
             let cf;
-            if(this.textures.exists('fx_campfire')){cf=this.add.image(cx,cy,'fx_campfire').setDepth(4);cf.setDisplaySize(TILE*1.5,TILE*1.5);this.tweens.add({targets:cf,scaleX:cf.scaleX*1.1,scaleY:cf.scaleY*1.1,yoyo:true,repeat:-1,duration:400});}
-            else{cf=this.add.circle(cx,cy,10,0xFF6D00).setDepth(4);}
+            if(this.textures.exists('sprite_campfire')){
+                cf=this.add.image(cx,cy,'sprite_campfire').setDepth(4);
+                cf.setDisplaySize(TILE*1.5,TILE*1.5);
+                this.tweens.add({targets:cf,scaleX:cf.scaleX*1.1,scaleY:cf.scaleY*1.1,yoyo:true,repeat:-1,duration:400});
+            } else {
+                cf=this.add.circle(cx,cy,10,0xFF6D00).setDepth(4);
+            }
+            // Campfire glow
+            const glow = this.add.circle(cx, cy, def.light/3, 0xFF8F00, 0.08).setDepth(3);
+            this.tweens.add({targets:glow, alpha:0.12, yoyo:true, repeat:-1, duration:600});
+
             this.physics.add.existing(cf,true); cf.light=def.light;
             this.campfires.push(cf);
             item.qty--; if(item.qty<=0)this.player.inventory.splice(slot,1);
             this.showFloatingText(cx,cy-20,'放置營火','#FF6D00');
+            AudioMgr.playPlace();
         } else if (item.id==='trap') {
             const tx=this.player.x,ty=this.player.y;
             const trap=this.add.circle(tx,ty,8,0x795548,0.6).setDepth(2);
@@ -535,6 +576,7 @@ class GameScene extends Phaser.Scene {
             this.traps.push(trap);
             item.qty--; if(item.qty<=0)this.player.inventory.splice(slot,1);
             this.showFloatingText(tx,ty-20,'放置陷阱','#795548');
+            AudioMgr.playPlace();
         }
     }
 
@@ -549,26 +591,22 @@ class GameScene extends Phaser.Scene {
         for(const[id,qty] of Object.entries(recipe.mats)) this.removeItem(id,qty);
         this.addItem(recipe.result,recipe.qty);
         this.showFloatingText(this.player.x,this.player.y-20,`合成 ${D.ITEMS[recipe.result].name} x${recipe.qty}`,'#FFC107');
+        AudioMgr.playCraft();
         return true;
     }
 
-    // ===== Combat — 使用特效圖片 =====
+    // ===== Combat =====
     playerAttack() {
         if(!this.player.alive) return;
+        AudioMgr.playAttack();
         const range=50+(D.ITEMS[this.player.equipped.weapon]?.range||1)*10;
         const fx=this.player.facing;
         const ax=this.player.x+fx.x*20, ay=this.player.y+fx.y*20;
 
-        // Attack effect using fx_slash image
-        let slash;
-        if(this.textures.exists('fx_slash')){
-            slash=this.add.image(ax,ay,'fx_slash').setDepth(20);
-            slash.setDisplaySize(range,range).setAlpha(0.8);
-            slash.setAngle(Math.atan2(fx.y,fx.x)*180/Math.PI);
-        }else{
-            slash=this.add.circle(ax,ay,range/2,0xFFFFFF,0.5).setDepth(20);
-        }
-        this.tweens.add({targets:slash,alpha:0,scale:slash.scale?slash.scale*1.5:1.5,duration:200,onComplete:()=>slash.destroy()});
+        // Attack arc effect
+        const slash = this.add.arc(ax, ay, range/2, 0, 180, false, 0xFFFFFF, 0.5).setDepth(20);
+        slash.setAngle(Math.atan2(fx.y, fx.x) * 180 / Math.PI - 90);
+        this.tweens.add({targets:slash,alpha:0,scale:1.5,duration:200,onComplete:()=>slash.destroy()});
 
         this.dinos.forEach(dino => {
             if(!dino.alive) return;
@@ -584,15 +622,15 @@ class GameScene extends Phaser.Scene {
     damageDino(dino, dmg) {
         dino.hp -= dmg;
         this.showFloatingText(dino.x,dino.y-20,`-${Math.floor(dmg)}`,'#FF5252');
+        AudioMgr.playHit();
 
-        // Damage flash using fx_damage
-        if(this.textures.exists('fx_damage')){
-            const fxd=this.add.image(dino.x,dino.y,'fx_damage').setDepth(20).setDisplaySize(dino.dinoData.size*2,dino.dinoData.size*2).setAlpha(0.7);
-            this.tweens.add({targets:fxd,alpha:0,duration:300,onComplete:()=>fxd.destroy()});
-        }
-        // White flash
-        if(dino.isImage){dino.setTint(0xFFFFFF);this.time.delayedCall(100,()=>{if(dino.alive)dino.clearTint();});}
-        else{dino.setFillStyle(0xFFFFFF);this.time.delayedCall(100,()=>{if(dino.alive)dino.setFillStyle(dino.dinoData.color);});}
+        // Red flash
+        if(dino.setTint) { dino.setTint(0xFF0000); this.time.delayedCall(120,()=>{if(dino.alive && dino.clearTint) dino.clearTint();}); }
+        // Knockback
+        const kb = 3;
+        const dx = dino.x - this.player.x, dy = dino.y - this.player.y;
+        const len = Math.hypot(dx,dy) || 1;
+        dino.x += (dx/len)*kb; dino.y += (dy/len)*kb;
 
         if(dino.dinoData.flee) dino.state='flee';
         else if(dino.state==='patrol') dino.state='chase';
@@ -603,14 +641,16 @@ class GameScene extends Phaser.Scene {
         dino.alive=false; dino.state='dead'; this.kills++;
         dino.dinoData.drops.forEach(([id,qty])=>{if(Math.random()<0.8)this.addItem(id,qty);});
         this.showFloatingText(dino.x,dino.y-30,`+${dino.dinoData.xp} XP`,'#FFD54F');
+        AudioMgr.playDinoDeath();
 
-        // Death effect using fx_dino_death
-        if(this.textures.exists('fx_dino_death')){
-            const fxd=this.add.image(dino.x,dino.y,'fx_dino_death').setDepth(20).setDisplaySize(dino.dinoData.size*2.5,dino.dinoData.size*2.5);
-            this.tweens.add({targets:fxd,alpha:0,scale:fxd.scale*1.5,duration:600,onComplete:()=>fxd.destroy()});
+        // Death particles
+        for (let i = 0; i < 6; i++) {
+            const p = this.add.circle(dino.x + rnd(-10,10), dino.y + rnd(-10,10), 3, 0xFFFFFF, 0.6).setDepth(20);
+            this.tweens.add({targets:p, x: p.x+rnd(-30,30), y: p.y+rnd(-30,30), alpha:0, scale:0, duration:400, onComplete:()=>p.destroy()});
         }
-        this.tweens.add({targets:[dino,dino.hpBg,dino.hpBar,dino.nameTxt],alpha:0,duration:500,
-            onComplete:()=>{dino.destroy();dino.hpBg.destroy();dino.hpBar.destroy();dino.nameTxt.destroy();}});
+
+        this.tweens.add({targets:[dino,dino.hpBg,dino.hpBar,dino.nameTxt,dino.shadow],alpha:0,duration:500,
+            onComplete:()=>{dino.destroy();dino.hpBg.destroy();dino.hpBar.destroy();dino.nameTxt.destroy();if(dino.shadow)dino.shadow.destroy();}});
         this.dinos=this.dinos.filter(d=>d!==dino);
     }
 
@@ -619,30 +659,29 @@ class GameScene extends Phaser.Scene {
         const actual=Math.max(1,dmg-this.player.def/2);
         this.player.hp-=actual;
         this.showFloatingText(this.player.x,this.player.y-25,`-${Math.floor(actual)}${label?' '+label:''}`,'#FF1744');
-        if(this.textures.exists('fx_damage')){
-            const fxd=this.add.image(this.player.x,this.player.y,'fx_damage').setDepth(20).setDisplaySize(TILE*2,TILE*2).setAlpha(0.6);
-            this.tweens.add({targets:fxd,alpha:0,duration:300,onComplete:()=>fxd.destroy()});
-        }
-        this.player.setTint(0xFF0000);
+        AudioMgr.playHit();
+
+        // Red tint flash
+        if(this.player.setTint) this.player.setTint(0xFF0000);
         this.player.invincible=true;
-        this.time.delayedCall(400,()=>{if(this.player.alive){this.player.clearTint();this.player.invincible=false;}});
+        this.time.delayedCall(400,()=>{if(this.player.alive){if(this.player.clearTint) this.player.clearTint();this.player.invincible=false;}});
         this.cameras.main.shake(100,0.005);
         if(this.player.hp<=0) this.playerDeath();
     }
 
     playerDeath() {
         this.player.alive=false;
-        if(this.textures.exists('player_death')) this.player.setTexture('player_death');
-        this.player.setTint(0x555555);
+        if(this.player.setTint) this.player.setTint(0x555555);
         this.player.body.setVelocity(0,0);
         this.showFloatingText(this.player.x,this.player.y-40,'你倒下了...','#FF1744');
+        AudioMgr.playPlayerDeath();
+
         const inv=this.player.inventory;
         for(let i=inv.length-1;i>=0;i--){if(D.ITEMS[inv[i].id]?.type==='resource'){const drop=Math.ceil(inv[i].qty*0.3);inv[i].qty-=drop;if(inv[i].qty<=0)inv.splice(i,1);}}
         this.time.delayedCall(3000,()=>{
             this.player.x=MW/2;this.player.y=MH/2;
             this.player.hp=D.PLAYER.MAX_HP/2;this.player.hunger=D.PLAYER.MAX_HUNGER/2;this.player.stamina=D.PLAYER.MAX_STAMINA;
-            this.player.alive=true;this.player.clearTint();
-            this.player.setTexture(this.player.currentArmor||'player_base');
+            this.player.alive=true;if(this.player.clearTint) this.player.clearTint();
             this.showFloatingText(MW/2,MH/2-30,'在營地重生','#4CAF50');
         });
     }
@@ -655,7 +694,12 @@ class GameScene extends Phaser.Scene {
         if(closest){
             if(this.addItem(closest.type,1)){
                 this.showFloatingText(closest.x,closest.y-10,`+1 ${D.RESOURCES[closest.type].name}`,'#81C784');
-                if(closest.icon) closest.icon.destroy();
+                AudioMgr.playGather();
+                // Gather particle effect
+                for (let i = 0; i < 4; i++) {
+                    const p = this.add.circle(closest.x+rnd(-5,5), closest.y+rnd(-5,5), 2, 0x81C784, 0.7).setDepth(20);
+                    this.tweens.add({targets:p, y:p.y-20, alpha:0, duration:400, onComplete:()=>p.destroy()});
+                }
                 closest.destroy();
                 this.resources=this.resources.filter(r=>r!==closest);
             }else{this.showFloatingText(this.player.x,this.player.y-20,'背包已滿!','#FF5252');}
@@ -686,9 +730,20 @@ class GameScene extends Phaser.Scene {
         this.updatePlayerMovement();
         this.updateDinoAI();
         this.updateSwampDamage(delta);
+
+        // Update player shadow position
+        if(this.playerShadow) {
+            this.playerShadow.setPosition(this.player.x, this.player.y + 12);
+        }
+
         // Flip player sprite based on facing direction
-        if(this.player.facing.x<0) this.player.setFlipX(true);
-        else if(this.player.facing.x>0) this.player.setFlipX(false);
+        if(this.player.facing.x<0 && this.player.setFlipX) this.player.setFlipX(true);
+        else if(this.player.facing.x>0 && this.player.setFlipX) this.player.setFlipX(false);
+
+        // Walking bob
+        if(this.player.body.velocity.length() > 10) {
+            this.player.y += Math.sin(time * 0.008) * 0.3;
+        }
     }
 
     updateDayNight(delta) {
@@ -696,9 +751,12 @@ class GameScene extends Phaser.Scene {
         const{DAY_DURATION,DUSK_DURATION,NIGHT_DURATION,PHASES}=D.DAY_NIGHT;
         const cycle=DAY_DURATION+DUSK_DURATION+NIGHT_DURATION;
         const t=this.dayTimer%cycle;
+        const prevPhase = this.dayPhase;
         if(t<DAY_DURATION){this.dayPhase=PHASES.DAY;this.overlay.setAlpha(0);}
         else if(t<DAY_DURATION+DUSK_DURATION){this.dayPhase=PHASES.DUSK;this.overlay.setFillStyle(0x331100);this.overlay.setAlpha((t-DAY_DURATION)/DUSK_DURATION*0.3);}
         else{this.dayPhase=PHASES.NIGHT;const torch=this.player.torchActive||this.campfires.some(cf=>dist(cf,this.player)<150);this.overlay.setFillStyle(0x000033);this.overlay.setAlpha(torch?0.35:0.6);}
+        // Update BGM on phase change
+        if(prevPhase !== this.dayPhase) AudioMgr.updateBGM(this.dayPhase);
     }
 
     updatePlayerMovement() {
@@ -726,8 +784,14 @@ class GameScene extends Phaser.Scene {
         const biome=this.mapData[Math.floor(this.player.y/TILE)]?.[Math.floor(this.player.x/TILE)];
         if(biome===D.MAP.BIOMES.SWAMP){
             if(!this._swampT)this._swampT=0;this._swampT+=delta;
-            if(this._swampT>10000){this._swampT=0;this.damagePlayer(1,'瘴氣');
-                if(this.textures.exists('fx_poison')){const fxp=this.add.image(this.player.x,this.player.y,'fx_poison').setDepth(20).setDisplaySize(TILE*2,TILE*2).setAlpha(0.6);this.tweens.add({targets:fxp,alpha:0,duration:800,onComplete:()=>fxp.destroy()});}
+            if(this._swampT>10000){
+                this._swampT=0;this.damagePlayer(1,'瘴氣');
+                AudioMgr.playPoison();
+                // Poison particles
+                for(let i=0;i<4;i++){
+                    const p=this.add.circle(this.player.x+rnd(-15,15),this.player.y+rnd(-15,15),3,0x9C27B0,0.5).setDepth(20);
+                    this.tweens.add({targets:p,y:p.y-25,alpha:0,duration:600,onComplete:()=>p.destroy()});
+                }
             }
         }
     }
@@ -743,13 +807,13 @@ class GameScene extends Phaser.Scene {
                     if(dist(dino,dino.patrolTarget)<10||dist(dino,dino.patrolTarget)>500)
                         dino.patrolTarget={x:dino.homeX+rnd(-120,120),y:dino.homeY+rnd(-120,120)};
                     this.moveToward(dino,dino.patrolTarget,data.speed*0.4);
-                    if(dino.isImage) dino.setFlipX(dino.body.velocity.x<0);
+                    if(dino.setFlipX) dino.setFlipX(dino.body.velocity.x<0);
                     if(d<data.detectRange&&!inCamp&&!data.passive) dino.state='chase';
                     break;
                 case 'chase':
                     if(d>data.aggro||inCamp){dino.state='patrol';break;}
                     this.moveToward(dino,p,data.speed*nightMult);
-                    if(dino.isImage) dino.setFlipX(p.x<dino.x);
+                    if(dino.setFlipX) dino.setFlipX(p.x<dino.x);
                     if(d<data.size+15) {dino.state='attack';dino.attackCd=0;}
                     break;
                 case 'attack':
@@ -761,6 +825,7 @@ class GameScene extends Phaser.Scene {
                         this.damagePlayer(dmg);
                         if(data.poison&&!p.poisoned){
                             p.poisoned=true;this.showFloatingText(p.x,p.y-35,'中毒!','#9C27B0');
+                            AudioMgr.playPoison();
                             p.poisonTimer=this.time.addEvent({delay:1000,repeat:5,callback:()=>{if(p.alive&&p.poisoned)this.damagePlayer(2,'毒');}});
                             this.time.delayedCall(6000,()=>{p.poisoned=false;});
                         }
@@ -772,11 +837,12 @@ class GameScene extends Phaser.Scene {
                     if(d>data.aggro) dino.state='patrol';
                     break;
             }
-            if(dino.hpBg&&dino.alive){
-                dino.hpBg.setPosition(dino.x,dino.y-data.size-4);
-                dino.hpBar.setPosition(dino.x-15,dino.y-data.size-4);
-                dino.hpBar.width=30*(dino.hp/dino.maxHp);
-                dino.nameTxt.setPosition(dino.x,dino.y-data.size-12);
+            // Update positions of associated elements
+            if(dino.alive){
+                if(dino.hpBg){ dino.hpBg.setPosition(dino.x,dino.y-data.size-4); }
+                if(dino.hpBar){ dino.hpBar.setPosition(dino.x-15,dino.y-data.size-4); dino.hpBar.width=30*(dino.hp/dino.maxHp); }
+                if(dino.nameTxt){ dino.nameTxt.setPosition(dino.x,dino.y-data.size-12); }
+                if(dino.shadow){ dino.shadow.setPosition(dino.x, dino.y+data.size*0.4); }
             }
             this.traps.forEach(trap=>{
                 if(trap.active&&dist(trap,dino)<20){
@@ -796,7 +862,7 @@ class GameScene extends Phaser.Scene {
 }
 
 // ============================================
-// UI Scene — 使用 UI 圖片
+// UI Scene
 // ============================================
 class UIScene extends Phaser.Scene {
     constructor() { super('UI'); }
@@ -806,11 +872,8 @@ class UIScene extends Phaser.Scene {
         const w = this.cameras.main.width, h = this.cameras.main.height;
         const safeTop = 16, safeLeft = 12;
 
-        // HUD image background
-        if (this.textures.exists('ui_hud_bars')) {
-            const hud = this.add.image(safeLeft + 80, safeTop + 30, 'ui_hud_bars').setScrollFactor(0).setDepth(100);
-            hud.setDisplaySize(170, 70).setAlpha(0.4).setOrigin(0.5);
-        }
+        // HUD background
+        this.add.rectangle(safeLeft+80, safeTop+30, 170, 70, 0x000000, 0.35).setOrigin(0.5).setScrollFactor(0).setDepth(100);
 
         // HP/Hunger/Stamina bars
         this.hpBg = this.add.rectangle(safeLeft+80, safeTop+12, 140, 14, 0x333333).setOrigin(0.5).setScrollFactor(0).setDepth(101);
@@ -828,18 +891,19 @@ class UIScene extends Phaser.Scene {
         this.staminaTxt = this.add.text(safeLeft+80, safeTop+48, '', {fontSize:'10px',fill:'#fff',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(102);
         this.add.text(safeLeft, safeTop+48, '⚡', {fontSize:'11px'}).setOrigin(0,0.5).setScrollFactor(0).setDepth(102);
 
-        // Day/Night indicator image
-        if (this.textures.exists('ui_daynight_indicator')) {
-            this.add.image(w/2, safeTop+20, 'ui_daynight_indicator').setScrollFactor(0).setDepth(100).setDisplaySize(40,40).setAlpha(0.5);
-        }
+        // Day/Night + Biome
         this.dayTxt = this.add.text(w/2, safeTop+8, '', {fontSize:'13px',fill:'#FFD54F',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(101);
         this.biomeTxt = this.add.text(w/2, safeTop+24, '', {fontSize:'10px',fill:'#aaa',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(101);
 
-        // Minimap frame
-        if (this.textures.exists('ui_minimap_frame')) {
-            this.add.image(w-50, safeTop+50, 'ui_minimap_frame').setScrollFactor(0).setDepth(100).setDisplaySize(80,80).setAlpha(0.5);
-        }
+        // Stats
         this.statsTxt = this.add.text(w-10, safeTop+8, '', {fontSize:'10px',fill:'#81C784',fontFamily:'Arial',align:'right'}).setOrigin(1,0).setScrollFactor(0).setDepth(101);
+
+        // Sound toggle button
+        const sndBtn = this.add.text(w-10, safeTop+50, '🔊', {fontSize:'16px'}).setOrigin(1,0).setScrollFactor(0).setDepth(110).setInteractive();
+        sndBtn.on('pointerdown', () => {
+            AudioMgr.toggleMute();
+            sndBtn.setText(AudioMgr.masterGain?.gain.value > 0 ? '🔊' : '🔇');
+        });
 
         if (this.gs.isMobile) this.createMobileButtons(w, h);
 
@@ -854,7 +918,7 @@ class UIScene extends Phaser.Scene {
             const bg = this.add.rectangle(sx,0,40,40,0x1a1a1a,0.7).setStrokeStyle(1,0x4CAF50);
             const txt = this.add.text(sx,0,'',{fontSize:'9px',fill:'#fff',fontFamily:'Arial',align:'center',wordWrap:{width:38}}).setOrigin(0.5);
             const qty = this.add.text(sx+16,16,'',{fontSize:'8px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(1,1);
-            bg.setInteractive().on('pointerdown',()=>this.gs.useItem(i));
+            bg.setInteractive().on('pointerdown',()=>{AudioMgr.playClick();this.gs.useItem(i);});
             this.quickBar.add([bg,txt,qty]);
             this.quickSlots.push({bg,txt,qty});
         }
@@ -867,19 +931,19 @@ class UIScene extends Phaser.Scene {
         const btnSize=52, margin=16, bottomY=h-40, rightX=w-margin;
         const atkBtn=this.add.circle(rightX-btnSize/2, bottomY-btnSize-10, btnSize/2, 0xF44336, 0.7).setInteractive().setScrollFactor(0).setDepth(110);
         this.add.text(rightX-btnSize/2, bottomY-btnSize-10, '⚔️', {fontSize:'20px'}).setOrigin(0.5).setScrollFactor(0).setDepth(111);
-        atkBtn.on('pointerdown',()=>this.gs.playerAttack());
+        atkBtn.on('pointerdown',()=>{this.gs.playerAttack();});
 
         const gatherBtn=this.add.circle(rightX-btnSize*1.6, bottomY-btnSize/2, btnSize/2, 0x4CAF50, 0.7).setInteractive().setScrollFactor(0).setDepth(110);
         this.add.text(rightX-btnSize*1.6, bottomY-btnSize/2, '🪓', {fontSize:'20px'}).setOrigin(0.5).setScrollFactor(0).setDepth(111);
-        gatherBtn.on('pointerdown',()=>this.gs.gather());
+        gatherBtn.on('pointerdown',()=>{this.gs.gather();});
 
         const invBtn=this.add.circle(rightX-btnSize/2, bottomY+10, btnSize/3, 0x2196F3, 0.7).setInteractive().setScrollFactor(0).setDepth(110);
         this.add.text(rightX-btnSize/2, bottomY+10, '🎒', {fontSize:'14px'}).setOrigin(0.5).setScrollFactor(0).setDepth(111);
-        invBtn.on('pointerdown',()=>this.toggleInventory());
+        invBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleInventory();});
 
         const craftBtn=this.add.circle(rightX-btnSize*1.6, bottomY+10, btnSize/3, 0xFF9800, 0.7).setInteractive().setScrollFactor(0).setDepth(110);
         this.add.text(rightX-btnSize*1.6, bottomY+10, '🔨', {fontSize:'14px'}).setOrigin(0.5).setScrollFactor(0).setDepth(111);
-        craftBtn.on('pointerdown',()=>this.toggleCrafting());
+        craftBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleCrafting();});
     }
 
     toggleInventory() {
@@ -896,16 +960,10 @@ class UIScene extends Phaser.Scene {
     buildInventoryPanel() {
         this.invPanel.removeAll(true);
         const pw=280, ph=360;
-        // Use inventory UI image as background
-        if(this.textures.exists('ui_inventory')){
-            const bgImg=this.add.image(0,0,'ui_inventory').setAlpha(0.3);
-            bgImg.setDisplaySize(pw,ph);
-            this.invPanel.add(bgImg);
-        }
-        this.invPanel.add(this.add.rectangle(0,0,pw,ph,0x1a1a1a,0.88).setStrokeStyle(2,0x4CAF50));
+        this.invPanel.add(this.add.rectangle(0,0,pw,ph,0x1a1a1a,0.92).setStrokeStyle(2,0x4CAF50));
         this.invPanel.add(this.add.text(0,-ph/2+16,'🎒 背包',{fontSize:'15px',fill:'#4CAF50',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5));
         const closeBtn=this.add.text(pw/2-16,-ph/2+10,'✕',{fontSize:'16px',fill:'#ff5252',fontFamily:'Arial'}).setOrigin(0.5).setInteractive();
-        closeBtn.on('pointerdown',()=>this.toggleInventory()); this.invPanel.add(closeBtn);
+        closeBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleInventory();}); this.invPanel.add(closeBtn);
 
         const ep=this.gs.player.equipped;
         this.invPanel.add(this.add.text(-pw/2+12,-ph/2+36,`武器: ${ep.weapon?D.ITEMS[ep.weapon].name:'無'} | 防具: ${ep.armor?D.ITEMS[ep.armor].name:'無'}`,{fontSize:'9px',fill:'#FFD54F',fontFamily:'Arial'}));
@@ -922,7 +980,7 @@ class UIScene extends Phaser.Scene {
                 const item=inv[i], def=D.ITEMS[item.id];
                 this.invPanel.add(this.add.text(sx,sy-6,def.name.substring(0,3),{fontSize:'10px',fill:'#fff',fontFamily:'Arial'}).setOrigin(0.5));
                 this.invPanel.add(this.add.text(sx+14,sy+14,`${item.qty}`,{fontSize:'8px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(1,1));
-                const idx=i; bg.on('pointerdown',()=>{this.gs.useItem(idx);this.buildInventoryPanel();});
+                const idx=i; bg.on('pointerdown',()=>{AudioMgr.playClick();this.gs.useItem(idx);this.buildInventoryPanel();});
             }
         }
     }
@@ -930,15 +988,10 @@ class UIScene extends Phaser.Scene {
     buildCraftPanel() {
         this.craftPanel.removeAll(true);
         const pw=300, ph=400;
-        if(this.textures.exists('ui_crafting')){
-            const bgImg=this.add.image(0,0,'ui_crafting').setAlpha(0.3);
-            bgImg.setDisplaySize(pw,ph);
-            this.craftPanel.add(bgImg);
-        }
-        this.craftPanel.add(this.add.rectangle(0,0,pw,ph,0x1a1a1a,0.88).setStrokeStyle(2,0xFF9800));
+        this.craftPanel.add(this.add.rectangle(0,0,pw,ph,0x1a1a1a,0.92).setStrokeStyle(2,0xFF9800));
         this.craftPanel.add(this.add.text(0,-ph/2+16,'🔨 合成',{fontSize:'15px',fill:'#FF9800',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5));
         const closeBtn=this.add.text(pw/2-16,-ph/2+10,'✕',{fontSize:'16px',fill:'#ff5252',fontFamily:'Arial'}).setOrigin(0.5).setInteractive();
-        closeBtn.on('pointerdown',()=>this.toggleCrafting()); this.craftPanel.add(closeBtn);
+        closeBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleCrafting();}); this.craftPanel.add(closeBtn);
 
         const startY=-ph/2+42, rowH=42;
         D.RECIPES.forEach((r,i)=>{
