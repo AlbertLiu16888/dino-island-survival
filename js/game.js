@@ -96,7 +96,7 @@ class MenuScene extends Phaser.Scene {
             this.scene.start('Lobby',{skinIdx:this.selectedSkin,playerName:name});});
 
         const isMobile=this.sys.game.device.input.touch;
-        this.add.text(w/2,h*0.82,isMobile?'觸控搖桿移動 | 點擊按鈕操作':'WASD移動 | 空白鍵攻擊 | E採集 | I背包 | C合成',{fontSize:Math.min(11,w*0.028)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.82,isMobile?'觸控搖桿移動 | 點擊按鈕操作':'WASD移動 | Space攻擊/採集 | I背包 | C合成 | R儲藏箱',{fontSize:Math.min(11,w*0.028)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
 
         // Biome previews (compact row)
         const tileKeys=['tile_camp','tile_grass','tile_forest','tile_swamp','tile_volcano'];
@@ -106,7 +106,7 @@ class MenuScene extends Phaser.Scene {
             if(this.textures.exists(key))this.add.image(startX+i*(pw+gap),h*0.89,key).setDisplaySize(pw,pw).setAlpha(0.7);
             this.add.text(startX+i*(pw+gap),h*0.89+pw*0.6,biomeLabels[i],{fontSize:'8px',fill:'#777',fontFamily:'Arial'}).setOrigin(0.5);
         });
-        this.add.text(w/2,h*0.97,'v3.1 — 10天生存 | 角色選擇 | 真實多人連線',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.97,'v3.2 — 10天生存 | 儲藏箱 | 真實多人連線',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
     }
 }
 
@@ -292,6 +292,7 @@ class GameScene extends Phaser.Scene {
         this._bossWarnCd=0;this.currentDay=1;this.maxDays=10;this.gameWon=false;
         this.moveVec={x:0,y:0};this._pendingAction=null;
         this._removedResIds=[];this._nextResId=0;this._nextDinoId=0;
+        this._nextPlaceId=0;this._pendingPlaceables=[];this.chests=[];this.chestData=[];
 
         // Remote players map
         this.remotePlayers=new Map();
@@ -392,8 +393,12 @@ class GameScene extends Phaser.Scene {
         const conn=NetMgr.connections.find(c=>c.peer===peerId);
         if(!conn||!conn.open)return;
         const resData=this.resources.filter(r=>r.active!==false).map(r=>({id:r.resId,x:Math.round(r.x),y:Math.round(r.y),t:r.type}));
+        const cfData=this.campfires.map(cf=>({tp:'campfire',x:Math.round(cf.x),y:Math.round(cf.y)}));
+        const trData=this.traps.filter(t=>t.active).map(t=>({tp:'trap',x:Math.round(t.x),y:Math.round(t.y)}));
+        const chData=this.chests.map(c=>({tp:'chest',id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),inv:c.inventory}));
         try{
-            conn.send({t:'init',map:this.mapData,res:resData,dt:Math.round(this.dayTimer),cd:this.currentDay});
+            conn.send({t:'init',map:this.mapData,res:resData,dt:Math.round(this.dayTimer),cd:this.currentDay,
+                pls:[...cfData,...trData,...chData]});
         }catch(e){}
     }
 
@@ -415,10 +420,16 @@ class GameScene extends Phaser.Scene {
             hp:d.hp,mhp:d.maxHp,k:d.key,al:Math.round(d.alpha*10)/10,st:d.state
         }));
 
+        // Build placeables for sync
+        const pls=this._pendingPlaceables.length>0?this._pendingPlaceables.slice():undefined;
+        // Build chest inventories
+        const chd=this.chests.map(c=>({id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),inv:c.inventory}));
         const state={t:'s',p:players,d:dinos,rm:this._removedResIds,
             dt:Math.round(this.dayTimer),dp:this.dayPhase,k:this.kills,cd:this.currentDay};
+        if(pls)state.pls=pls;
+        if(chd.length>0)state.chd=chd;
         NetMgr.broadcast(state);
-        this._removedResIds=[];
+        this._removedResIds=[];this._pendingPlaceables=[];
     }
 
     handleRemoteInput(peerId,data){
@@ -437,6 +448,10 @@ class GameScene extends Phaser.Scene {
         // Process actions
         if(data.act==='attack')this.remoteAttack(rp);
         else if(data.act==='gather')this.remoteGather(rp);
+        else if(data.act==='chest_sync'&&data.cid!==undefined){
+            const ch=this.chests.find(c=>c.placeId===data.cid);
+            if(ch)ch.inventory=data.inv||[];
+        }
     }
 
     remoteAttack(rp){
@@ -484,6 +499,19 @@ class GameScene extends Phaser.Scene {
         }
         if(data.dt!==undefined)this.dayTimer=data.dt;
         if(data.cd!==undefined)this.currentDay=data.cd;
+        // Init placeables
+        if(data.pls){
+            data.pls.forEach(pl=>{
+                if(pl.tp==='campfire'){const cf=this._createCampfireVisual(pl.x,pl.y,{light:300});this.campfires.push(cf);}
+                else if(pl.tp==='trap')this._createTrapVisual(pl.x,pl.y,{dmg:15});
+                else if(pl.tp==='torch')this._createTorchVisual(pl.x,pl.y,{light:150});
+                else if(pl.tp==='chest'){
+                    const chest=this._createChestVisual(pl.x,pl.y);
+                    chest.placeId=pl.id;
+                    this.chests.push({sprite:chest,x:pl.x,y:pl.y,placeId:pl.id,inventory:pl.inv||[]});
+                }
+            });
+        }
     }
 
     applyStateUpdate(data){
@@ -567,6 +595,37 @@ class GameScene extends Phaser.Scene {
                 if(idx>=0){this.resources[idx].destroy();this.resources.splice(idx,1);}
             });
         }
+
+        // Sync placeables from host
+        if(data.pls){
+            data.pls.forEach(pl=>{
+                if(pl.tp==='torch')this._createTorchVisual(pl.x,pl.y,{light:150});
+                else if(pl.tp==='campfire'){const cf=this._createCampfireVisual(pl.x,pl.y,{light:300});this.campfires.push(cf);}
+                else if(pl.tp==='trap')this._createTrapVisual(pl.x,pl.y,{dmg:15});
+                else if(pl.tp==='chest'){
+                    // Check if chest already exists
+                    if(!this.chests.find(c=>c.placeId===pl.id)){
+                        const chest=this._createChestVisual(pl.x,pl.y);
+                        chest.placeId=pl.id;
+                        this.chests.push({sprite:chest,x:pl.x,y:pl.y,placeId:pl.id,inventory:[]});
+                    }
+                }
+            });
+        }
+
+        // Sync chest inventories from host
+        if(data.chd){
+            data.chd.forEach(cd=>{
+                let ch=this.chests.find(c=>c.placeId===cd.id);
+                if(!ch){
+                    const chest=this._createChestVisual(cd.x,cd.y);
+                    chest.placeId=cd.id;
+                    ch={sprite:chest,x:cd.x,y:cd.y,placeId:cd.id,inventory:[]};
+                    this.chests.push(ch);
+                }
+                ch.inventory=cd.inv||[];
+            });
+        }
     }
 
     _createClientDino(dd){
@@ -645,6 +704,7 @@ class GameScene extends Phaser.Scene {
             stamina:D.PLAYER.MAX_STAMINA,maxStamina:D.PLAYER.MAX_STAMINA,atk:D.PLAYER.ATTACK_BASE,def:D.PLAYER.DEFENSE_BASE,
             speed:D.PLAYER.SPEED,sprinting:false,inventory:[],equipped:{weapon:null,armor:null},
             facing:{x:0,y:1},alive:true,baseScale:pScale,invincible:false,poisoned:false,poisonTimer:null,lightRadius:0,torchActive:false});
+        this._workHunger=0;
         this.addItem('wood',5);this.addItem('stone',3);this.addItem('herb',3);this.addItem('fruit',5);
         // Player name above character
         this.playerNameTxt=this.add.text(cx,cy-22,this.myName,{fontSize:'11px',fill:'#A8D08D',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setDepth(11);
@@ -706,7 +766,7 @@ class GameScene extends Phaser.Scene {
 
     // ===== Input =====
     setupInput(){
-        this.keys=this.input.keyboard?.addKeys({w:'W',a:'A',s:'S',d:'D',space:'SPACE',e:'E',i:'I',c:'C',f:'F',shift:'SHIFT',esc:'ESC'});
+        this.keys=this.input.keyboard?.addKeys({w:'W',a:'A',s:'S',d:'D',space:'SPACE',e:'E',i:'I',c:'C',f:'F',r:'R',shift:'SHIFT',esc:'ESC'});
     }
 
     // ===== Inventory =====
@@ -743,28 +803,67 @@ class GameScene extends Phaser.Scene {
             this.player.torchActive=true;this.player.lightRadius=def.light;
             this.torchLight.setAlpha(0.08).setRadius(def.light/2);
             item.qty--;if(item.qty<=0)this.player.inventory.splice(slot,1);
-            const torch=this.textures.exists('sprite_torch')?this.add.image(px+rnd(-10,10),py+rnd(-10,10),'sprite_torch').setDepth(4).setDisplaySize(TILE,TILE*1.2):this.add.circle(px,py,5,0xFF6D00).setDepth(4);
-            const tGlow=this.add.circle(torch.x,torch.y,def.light/4,0xFF8F00,0.06).setDepth(3);
-            this.tweens.add({targets:tGlow,alpha:0.1,yoyo:true,repeat:-1,duration:500});
-            this.tweens.add({targets:torch,scaleX:(torch.scaleX||1)*1.05,scaleY:(torch.scaleY||1)*1.05,yoyo:true,repeat:-1,duration:300});
+            const tid=this._nextPlaceId++;
+            const torch=this._createTorchVisual(px+rnd(-10,10),py+rnd(-10,10),def);
+            torch.placeId=tid;
+            if(this.isMulti)this._pendingPlaceables.push({id:tid,tp:'torch',x:Math.round(torch.x),y:Math.round(torch.y)});
             this.showFloatingText(px,py-20,'放置火把🔥','#FF9800');AudioMgr.playPlace();
-            this.time.delayedCall(def.duration*1000,()=>{this.player.torchActive=false;this.player.lightRadius=0;this.torchLight.setAlpha(0);torch.destroy();tGlow.destroy();this.showFloatingText(this.player.x,this.player.y-20,'火把熄滅','#9E9E9E');});
+            this.time.delayedCall(def.duration*1000,()=>{this.player.torchActive=false;this.player.lightRadius=0;this.torchLight.setAlpha(0);torch.sprite.destroy();torch.glow.destroy();this.showFloatingText(this.player.x,this.player.y-20,'火把熄滅','#9E9E9E');});
         }else if(item.id==='campfire'){
-            let cf;
-            if(this.textures.exists('sprite_campfire')){cf=this.add.image(px,py,'sprite_campfire').setDepth(4).setDisplaySize(TILE*1.5,TILE*1.5);this.tweens.add({targets:cf,scaleX:cf.scaleX*1.1,scaleY:cf.scaleY*1.1,yoyo:true,repeat:-1,duration:400});}
-            else cf=this.add.circle(px,py,10,0xFF6D00).setDepth(4);
-            const glow=this.add.circle(px,py,def.light/3,0xFF8F00,0.08).setDepth(3);this.tweens.add({targets:glow,alpha:0.12,yoyo:true,repeat:-1,duration:600});
-            this.physics.add.existing(cf,true);cf.light=def.light;cf.glow=glow;this.campfires.push(cf);
+            const cid=this._nextPlaceId++;
+            const cf=this._createCampfireVisual(px,py,def);
+            cf.placeId=cid;this.campfires.push(cf);
             item.qty--;if(item.qty<=0)this.player.inventory.splice(slot,1);
+            if(this.isMulti)this._pendingPlaceables.push({id:cid,tp:'campfire',x:Math.round(px),y:Math.round(py)});
             this.showFloatingText(px,py-20,'放置營火🔥','#FF6D00');AudioMgr.playPlace();
         }else if(item.id==='trap'){
-            let trap;
-            if(this.textures.exists('sprite_trap')){trap=this.add.image(px,py,'sprite_trap').setDepth(2).setDisplaySize(TILE*0.8,TILE*0.8).setAlpha(0.85);}
-            else trap=this.add.circle(px,py,8,0x795548,0.6).setDepth(2);
-            this.physics.add.existing(trap,true);trap.dmg=def.dmg;trap.active=true;this.traps.push(trap);
+            const rid=this._nextPlaceId++;
+            const trap=this._createTrapVisual(px,py,def);
+            trap.placeId=rid;this.traps.push(trap);
             item.qty--;if(item.qty<=0)this.player.inventory.splice(slot,1);
+            if(this.isMulti)this._pendingPlaceables.push({id:rid,tp:'trap',x:Math.round(px),y:Math.round(py)});
             this.showFloatingText(px,py-20,'放置陷阱⚠️','#795548');AudioMgr.playPlace();
+        }else if(item.id==='chest'){
+            const chid=this._nextPlaceId++;
+            const chest=this._createChestVisual(px,py);
+            chest.placeId=chid;
+            const chestObj={sprite:chest,x:px,y:py,placeId:chid,inventory:[]};
+            this.chests.push(chestObj);
+            item.qty--;if(item.qty<=0)this.player.inventory.splice(slot,1);
+            if(this.isMulti)this._pendingPlaceables.push({id:chid,tp:'chest',x:Math.round(px),y:Math.round(py)});
+            this.showFloatingText(px,py-20,'放置儲藏箱📦','#8D6E63');AudioMgr.playPlace();
         }
+    }
+    _createTorchVisual(px,py,def){
+        const torch=this.textures.exists('sprite_torch')?this.add.image(px,py,'sprite_torch').setDepth(4).setDisplaySize(TILE,TILE*1.2):this.add.circle(px,py,5,0xFF6D00).setDepth(4);
+        const tGlow=this.add.circle(torch.x,torch.y,(def?.light||150)/4,0xFF8F00,0.06).setDepth(3);
+        this.tweens.add({targets:tGlow,alpha:0.1,yoyo:true,repeat:-1,duration:500});
+        this.tweens.add({targets:torch,scaleX:(torch.scaleX||1)*1.05,scaleY:(torch.scaleY||1)*1.05,yoyo:true,repeat:-1,duration:300});
+        return {sprite:torch,glow:tGlow,x:torch.x,y:torch.y};
+    }
+    _createCampfireVisual(px,py,def){
+        let cf;
+        if(this.textures.exists('sprite_campfire')){cf=this.add.image(px,py,'sprite_campfire').setDepth(4).setDisplaySize(TILE*1.5,TILE*1.5);this.tweens.add({targets:cf,scaleX:cf.scaleX*1.1,scaleY:cf.scaleY*1.1,yoyo:true,repeat:-1,duration:400});}
+        else cf=this.add.circle(px,py,10,0xFF6D00).setDepth(4);
+        const glow=this.add.circle(px,py,(def?.light||300)/3,0xFF8F00,0.08).setDepth(3);this.tweens.add({targets:glow,alpha:0.12,yoyo:true,repeat:-1,duration:600});
+        this.physics.add.existing(cf,true);cf.light=def?.light||300;cf.glow=glow;cf.x=px;cf.y=py;
+        return cf;
+    }
+    _createTrapVisual(px,py,def){
+        let trap;
+        if(this.textures.exists('sprite_trap')){trap=this.add.image(px,py,'sprite_trap').setDepth(2).setDisplaySize(TILE*0.8,TILE*0.8).setAlpha(0.85);}
+        else trap=this.add.circle(px,py,8,0x795548,0.6).setDepth(2);
+        this.physics.add.existing(trap,true);trap.dmg=def?.dmg||15;trap.active=true;
+        return trap;
+    }
+    _createChestVisual(px,py){
+        let chest;
+        if(this.textures.exists('sprite_chest')){chest=this.add.image(px,py,'sprite_chest').setDepth(4).setDisplaySize(TILE*1.2,TILE*1.2);}
+        else{chest=this.add.rectangle(px,py,TILE*0.9,TILE*0.7,0x8D6E63).setDepth(4).setStrokeStyle(2,0xFFD54F);}
+        this.physics.add.existing(chest,true);
+        const label=this.add.text(px,py-TILE*0.6,'📦',{fontSize:'14px'}).setOrigin(0.5).setDepth(5);
+        chest.label=label;
+        return chest;
     }
 
     // ===== Crafting =====
@@ -775,6 +874,7 @@ class GameScene extends Phaser.Scene {
     playerAttack(){
         if(!this.player.alive)return;
         if(this.isMulti&&!this.isHost){this._pendingAction='attack';return;}
+        this.addWorkHunger(0.5);
         const weapon=this.player.equipped.weapon;
         const wDef=weapon?D.ITEMS[weapon]:null;
         if(wDef&&wDef.ranged){this.shootArrow();return;}
@@ -854,11 +954,34 @@ class GameScene extends Phaser.Scene {
         let closest=null,minD=45;
         this.resources.forEach(r=>{const d=dist(r,this.player);if(d<minD){minD=d;closest=r;}});
         if(closest){if(this.addItem(closest.type,1)){
+            this.addWorkHunger(0.3);
             this.showFloatingText(closest.x,closest.y-10,`+1 ${D.RESOURCES[closest.type].name}`,'#81C784');AudioMgr.playGather();
             if(this.isMulti)this._removedResIds.push(closest.resId);
             for(let i=0;i<4;i++){const p=this.add.circle(closest.x+rnd(-5,5),closest.y+rnd(-5,5),2,0x81C784,0.7).setDepth(20);this.tweens.add({targets:p,y:p.y-20,alpha:0,duration:400,onComplete:()=>p.destroy()});}
             closest.destroy();this.resources=this.resources.filter(r=>r!==closest);
         }else this.showFloatingText(this.player.x,this.player.y-20,'背包已滿!','#FF5252');}
+    }
+
+    // ===== Chest Interaction =====
+    getNearChest(){return this.chests.find(c=>dist({x:c.x,y:c.y},this.player)<60);}
+    depositToChest(chest,slot){
+        const item=this.player.inventory[slot];if(!item)return false;
+        const def=D.ITEMS[item.id];
+        const ex=chest.inventory.find(s=>s.id===item.id&&s.qty<def.stack);
+        if(ex){const a=Math.min(item.qty,def.stack-ex.qty);ex.qty+=a;item.qty-=a;if(item.qty<=0)this.player.inventory.splice(slot,1);}
+        else if(chest.inventory.length<(D.ITEMS.chest.slots||20)){chest.inventory.push({...item});this.player.inventory.splice(slot,1);}
+        else{this.showFloatingText(this.player.x,this.player.y-20,'儲藏箱已滿!','#FF5252');return false;}
+        this.showFloatingText(this.player.x,this.player.y-20,'存入物品','#8D6E63');AudioMgr.playPlace();
+        if(this.isMulti&&!this.isHost)NetMgr.sendToHost({act:'chest_sync',cid:chest.placeId,inv:chest.inventory});
+        return true;
+    }
+    withdrawFromChest(chest,slot){
+        const item=chest.inventory[slot];if(!item)return false;
+        if(this.addItem(item.id,item.qty)){chest.inventory.splice(slot,1);
+            this.showFloatingText(this.player.x,this.player.y-20,'取出物品','#4CAF50');AudioMgr.playGather();
+            if(this.isMulti&&!this.isHost)NetMgr.sendToHost({act:'chest_sync',cid:chest.placeId,inv:chest.inventory});
+            return true;
+        }else{this.showFloatingText(this.player.x,this.player.y-20,'背包已滿!','#FF5252');return false;}
     }
 
     // Smart action: auto-detect attack or gather
@@ -871,7 +994,8 @@ class GameScene extends Phaser.Scene {
     }
 
     // ===== Systems =====
-    tickHunger(){if(!this.player.alive)return;const rate=this.player.sprinting?D.PLAYER.HUNGER_DECAY*2:D.PLAYER.HUNGER_DECAY;this.player.hunger=Math.max(0,this.player.hunger-rate);if(this.player.hunger<=0)this.damagePlayer(D.PLAYER.HUNGER_DAMAGE,'飢餓');}
+    tickHunger(){if(!this.player.alive)return;let rate=D.PLAYER.HUNGER_DECAY;if(this.player.sprinting)rate*=2.5;if(this._workHunger>0){rate+=this._workHunger;this._workHunger=0;}this.player.hunger=Math.max(0,this.player.hunger-rate);if(this.player.hunger<=0)this.damagePlayer(D.PLAYER.HUNGER_DAMAGE,'飢餓');else if(this.player.hunger>=60&&this.player.hp<this.player.maxHp){this.player.hp=Math.min(this.player.maxHp,this.player.hp+1);}}
+    addWorkHunger(amount){this._workHunger=(this._workHunger||0)+amount;}
     isInCamp(x,y){return dist({x,y},{x:MW/2,y:MH/2})<5*TILE;}
     getDayPhaseStr(){return ['☀️ 白天','🌅 黃昏','🌙 黑夜'][this.dayPhase];}
     getBiomeName(x,y){const tx=Math.floor(x/TILE),ty=Math.floor(y/TILE);return ['營地','草原','森林','沼澤','火山','洞穴'][this.mapData[ty]?.[tx]]||'未知';}
@@ -949,6 +1073,7 @@ class GameScene extends Phaser.Scene {
             if(Phaser.Input.Keyboard.JustDown(this.keys.i))this.events.emit('toggleInventory');
             if(Phaser.Input.Keyboard.JustDown(this.keys.c))this.events.emit('toggleCrafting');
             if(Phaser.Input.Keyboard.JustDown(this.keys.f)){if(p.inventory.length>0)this.useItem(0);}
+            if(Phaser.Input.Keyboard.JustDown(this.keys.r))this.events.emit('toggleChest');
         }
         // Mobile joystick via UIScene
         if(this.moveVec.x!==0||this.moveVec.y!==0){vx=this.moveVec.x;vy=this.moveVec.y;}
@@ -956,7 +1081,7 @@ class GameScene extends Phaser.Scene {
         const biome=this.mapData[Math.floor(p.y/TILE)]?.[Math.floor(p.x/TILE)];
         const spd=(p.sprinting?D.PLAYER.SPRINT_SPEED:p.speed)*(biome===D.MAP.BIOMES.SWAMP?0.7:1);
         p.body.setVelocity(vx*spd,vy*spd);
-        if(p.sprinting&&len>0){p.stamina=Math.max(0,p.stamina-0.3);if(p.stamina<=0)p.sprinting=false;}
+        if(p.sprinting&&len>0){p.stamina=Math.max(0,p.stamina-0.3);if(p.stamina<=0)p.sprinting=false;this.addWorkHunger(0.02);}
     }
 
     updateSwampDamage(delta){
@@ -984,8 +1109,8 @@ class GameScene extends Phaser.Scene {
     updateDinoAI(delta){
         const p=this.player,isNight=this.dayPhase===D.DAY_NIGHT.PHASES.NIGHT,inCamp=this.isInCamp(p.x,p.y);
         // Find nearest player for each dino (host + remotes)
-        const allPlayers=[{x:p.x,y:p.y,alive:p.alive,isLocal:true}];
-        this.remotePlayers.forEach(rp=>{if(rp.alive)allPlayers.push({x:rp.sprite.x,y:rp.sprite.y,alive:true,isLocal:false});});
+        const allPlayers=[{x:p.x,y:p.y,alive:p.alive,isLocal:true,ref:null}];
+        this.remotePlayers.forEach(rp=>{if(rp.alive)allPlayers.push({x:rp.sprite.x,y:rp.sprite.y,alive:true,isLocal:false,ref:rp});});
 
         this.dinos.forEach(dino=>{
             if(!dino.alive)return;
@@ -1024,6 +1149,19 @@ class GameScene extends Phaser.Scene {
                             if(data.poison&&!p.poisoned){p.poisoned=true;this.showFloatingText(p.x,p.y-35,'中毒!','#9C27B0');AudioMgr.playPoison();
                                 p.poisonTimer=this.time.addEvent({delay:1000,repeat:5,callback:()=>{if(p.alive&&p.poisoned)this.damagePlayer(2,'毒');}});
                                 this.time.delayedCall(6000,()=>{p.poisoned=false;});}
+                        }else if(nearP.ref){
+                            // Damage remote player on host
+                            const rp=nearP.ref;
+                            const actual=Math.max(1,data.atk*nightMult-(rp.def||0)/2);
+                            rp.hp-=actual;
+                            this.showFloatingText(nearP.x,nearP.y-25,`-${Math.floor(actual)}`,'#FF1744');
+                            AudioMgr.playHit();
+                            if(rp.sprite.setTint)rp.sprite.setTint(0xFF0000);
+                            this.time.delayedCall(400,()=>{if(rp.alive&&rp.sprite.clearTint)rp.sprite.clearTint();});
+                            if(rp.hp<=0){rp.alive=false;rp.hp=0;if(rp.sprite.setTint)rp.sprite.setTint(0x555555);
+                                this.showFloatingText(nearP.x,nearP.y-40,'倒下了...','#FF1744');
+                                this.time.delayedCall(3000,()=>{rp.hp=D.PLAYER.MAX_HP/2;rp.alive=true;rp.sprite.x=MW/2;rp.sprite.y=MH/2;if(rp.sprite.clearTint)rp.sprite.clearTint();});
+                            }
                         }
                         dino.attackCd=isNight?900:1200;
                         if(dino.setTint){dino.setTint(0xFFAAAA);this.time.delayedCall(200,()=>{if(dino.alive&&dino.clearTint)dino.clearTint();});}
@@ -1095,6 +1233,7 @@ class UIScene extends Phaser.Scene {
 
         // ===== Mobile controls =====
         if(this._mob) this.createMobileControls(w,h);
+        else this.createKeyboardHints(w,h);
 
         // ===== Panels =====
         this.invPanel=this.add.container(w/2,h/2).setDepth(200).setVisible(false).setScrollFactor(0);
@@ -1111,8 +1250,13 @@ class UIScene extends Phaser.Scene {
             bg.setInteractive().on('pointerdown',()=>{AudioMgr.playClick();this.gs.useItem(i);});
             this.quickBar.add([bg,txt,qty]);this.quickSlots.push({bg,txt,qty});}
 
+        // Chest panel
+        this.chestPanel=this.add.container(w/2,h/2).setDepth(200).setVisible(false).setScrollFactor(0);
+        this.showChest=false;
+
         this.gs.events.on('toggleInventory',()=>this.toggleInventory());
         this.gs.events.on('toggleCrafting',()=>this.toggleCrafting());
+        this.gs.events.on('toggleChest',()=>this.toggleChest());
     }
 
     // ===== Mobile: Virtual Joystick + Action Buttons =====
@@ -1184,10 +1328,80 @@ class UIScene extends Phaser.Scene {
         this.add.text(btnR,btnBot+35,'合成',{fontSize:'10px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
         craftBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleCrafting();});
 
+        // Chest button
+        const chestBtn=this.add.circle(btnR-65,btnBot-60,22,0x6D4C41,0.8).setStrokeStyle(2,0xFFFFFF,0.4).setScrollFactor(0).setDepth(115).setInteractive();
+        this.add.text(btnR-65,btnBot-60,'📦',{fontSize:'18px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        this.add.text(btnR-65,btnBot-38,'儲藏',{fontSize:'9px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        chestBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleChest();});
+
     }
 
-    toggleInventory(){this.showInv=!this.showInv;this.showCraft=false;this.craftPanel.setVisible(false);if(this.showInv)this.buildInventoryPanel();this.invPanel.setVisible(this.showInv);}
-    toggleCrafting(){this.showCraft=!this.showCraft;this.showInv=false;this.invPanel.setVisible(false);this.craftPage=0;if(this.showCraft)this.buildCraftPanel();this.craftPanel.setVisible(this.showCraft);}
+    createKeyboardHints(w,h){
+        const hintBg=this.add.rectangle(w-10,h/2,160,180,0x000000,0.5).setOrigin(1,0.5).setScrollFactor(0).setDepth(99);
+        const hints=[
+            'WASD — 移動',
+            'Shift — 奔跑',
+            '空白鍵 — 攻擊/採集',
+            'E — 採集資源',
+            'I — 背包',
+            'C — 合成',
+            'F — 使用物品',
+            'R — 儲藏箱'
+        ];
+        hints.forEach((txt,i)=>{
+            this.add.text(w-90,h/2-70+i*20,txt,{fontSize:'11px',fill:'#81C784',fontFamily:'Arial',stroke:'#000',strokeThickness:1}).setOrigin(0.5).setScrollFactor(0).setDepth(100);
+        });
+        this.add.text(w-90,h/2+100,'按鍵提示',{fontSize:'10px',fill:'#555',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(100);
+    }
+
+    toggleInventory(){this.showInv=!this.showInv;this.showCraft=false;this.showChest=false;this.craftPanel.setVisible(false);this.chestPanel.setVisible(false);if(this.showInv)this.buildInventoryPanel();this.invPanel.setVisible(this.showInv);}
+    toggleCrafting(){this.showCraft=!this.showCraft;this.showInv=false;this.showChest=false;this.invPanel.setVisible(false);this.chestPanel.setVisible(false);this.craftPage=0;if(this.showCraft)this.buildCraftPanel();this.craftPanel.setVisible(this.showCraft);}
+    toggleChest(){
+        const ch=this.gs.getNearChest();
+        if(!ch){this.gs.showFloatingText(this.gs.player.x,this.gs.player.y-20,'附近沒有儲藏箱','#FF9800');this.showChest=false;this.chestPanel.setVisible(false);return;}
+        this.showChest=!this.showChest;this.showInv=false;this.showCraft=false;this.invPanel.setVisible(false);this.craftPanel.setVisible(false);
+        if(this.showChest)this.buildChestPanel(ch);this.chestPanel.setVisible(this.showChest);
+    }
+    buildChestPanel(chest){
+        this.chestPanel.removeAll(true);
+        const w=this.cameras.main.width,h=this.cameras.main.height;
+        const pw=Math.min(340,w*0.9),ph=Math.min(500,h*0.78);
+        const fs=(base)=>this._mob?Math.max(base,Math.floor(base*1.3)):base;
+        this.chestPanel.add(this.add.rectangle(0,0,pw,ph,0x1a1a1a,0.94).setStrokeStyle(2,0x8D6E63));
+        this.chestPanel.add(this.add.text(0,-ph/2+18,'📦 儲藏箱',{fontSize:fs(16)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5));
+        const closeBtn=this.add.text(pw/2-20,-ph/2+12,'✕',{fontSize:fs(20)+'px',fill:'#ff5252',fontFamily:'Arial'}).setOrigin(0.5).setInteractive();
+        closeBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleChest();});this.chestPanel.add(closeBtn);
+        // Chest inventory
+        this.chestPanel.add(this.add.text(-pw/2+14,-ph/2+40,'箱子物品:',{fontSize:fs(12)+'px',fill:'#FFD54F',fontFamily:'Arial'}));
+        const cols=5,slotSize=Math.floor((pw-20)/cols);
+        const startX=-cols*slotSize/2+slotSize/2;
+        let startY=-ph/2+58;
+        const chestSlots=D.ITEMS.chest.slots||20;
+        for(let i=0;i<chestSlots;i++){
+            const col=i%cols,row=Math.floor(i/cols),sx=startX+col*slotSize,sy=startY+row*slotSize;
+            const bg=this.add.rectangle(sx,sy,slotSize-4,slotSize-4,0x4E342E,0.8).setStrokeStyle(1,0x8D6E63).setInteractive();
+            this.chestPanel.add(bg);
+            if(i<chest.inventory.length){const item=chest.inventory[i],def=D.ITEMS[item.id];
+                this.chestPanel.add(this.add.text(sx,sy-8,def.name.substring(0,3),{fontSize:fs(12)+'px',fill:'#fff',fontFamily:'Arial'}).setOrigin(0.5));
+                this.chestPanel.add(this.add.text(sx+slotSize/2-6,sy+slotSize/2-6,`${item.qty}`,{fontSize:fs(10)+'px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(1,1));
+                const idx=i;bg.on('pointerdown',()=>{AudioMgr.playClick();this.gs.withdrawFromChest(chest,idx);this.buildChestPanel(chest);});
+            }
+        }
+        // Player inventory - deposit section
+        const invStartY=startY+Math.ceil(chestSlots/cols)*slotSize+10;
+        this.chestPanel.add(this.add.text(-pw/2+14,invStartY,'背包物品 (點擊存入):',{fontSize:fs(12)+'px',fill:'#81C784',fontFamily:'Arial'}));
+        const inv=this.gs.player.inventory;
+        const invY=invStartY+18;
+        for(let i=0;i<Math.min(inv.length,15);i++){
+            const col=i%cols,row=Math.floor(i/cols),sx=startX+col*slotSize,sy=invY+row*slotSize;
+            const bg=this.add.rectangle(sx,sy,slotSize-4,slotSize-4,0x333333,0.8).setStrokeStyle(1,0x4CAF50).setInteractive();
+            this.chestPanel.add(bg);
+            const item=inv[i],def=D.ITEMS[item.id];
+            this.chestPanel.add(this.add.text(sx,sy-8,def.name.substring(0,3),{fontSize:fs(12)+'px',fill:'#fff',fontFamily:'Arial'}).setOrigin(0.5));
+            this.chestPanel.add(this.add.text(sx+slotSize/2-6,sy+slotSize/2-6,`${item.qty}`,{fontSize:fs(10)+'px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(1,1));
+            const idx=i;bg.on('pointerdown',()=>{AudioMgr.playClick();this.gs.depositToChest(chest,idx);this.buildChestPanel(chest);});
+        }
+    }
 
     buildInventoryPanel(){
         this.invPanel.removeAll(true);

@@ -72,7 +72,8 @@ const GAME_DATA = {
         iron_armor: { name: '鐵甲', type: 'armor', slot: 'body', stack: 1, def: 15, desc: '防禦+15' },
         torch:    { name: '火把', type: 'tool', stack: 5, desc: '照亮周圍，驅趕小型恐龍', light: 150, duration: 120 },
         campfire: { name: '營火', type: 'placeable', stack: 3, desc: '安全據點，可合成/烹飪', light: 300 },
-        trap:     { name: '石陷阱', type: 'placeable', stack: 5, desc: '傷害15，減速50%', dmg: 15 }
+        trap:     { name: '石陷阱', type: 'placeable', stack: 5, desc: '傷害15，減速50%', dmg: 15 },
+        chest:    { name: '儲藏箱', type: 'placeable', stack: 2, desc: '共享20格儲物空間', slots: 20 }
     },
 
     // 合成配方
@@ -91,7 +92,8 @@ const GAME_DATA = {
         { id: 'heal_pot', result: 'heal_pot', qty: 1, mats: { herb: 8, meat: 1 }, time: 5, needFire: true },
         { id: 'torch', result: 'torch', qty: 2, mats: { wood: 2, herb: 1 }, time: 2 },
         { id: 'campfire', result: 'campfire', qty: 1, mats: { wood: 10, stone: 5 }, time: 5 },
-        { id: 'trap', result: 'trap', qty: 1, mats: { stone: 5, wood: 3 }, time: 4 }
+        { id: 'trap', result: 'trap', qty: 1, mats: { stone: 5, wood: 3 }, time: 4 },
+        { id: 'chest', result: 'chest', qty: 1, mats: { wood: 15, stone: 5, iron: 2 }, time: 6 }
     ],
 
     // 恐龍定義
