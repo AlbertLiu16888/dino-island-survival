@@ -1,22 +1,21 @@
-// ===== 恐龍島求生記 — 主遊戲引擎 v2.2 =====
-// 新增: 弓箭投射, 陷阱/營火/火把可見精靈, 10天生存任務, 難度遞增, 夜晚倒數
+// ===== 恐龍島求生記 — 主遊戲引擎 v3.0 =====
+// 真實多人連線(PeerJS) + 觸控搖桿 + 攻擊採集合併按鈕
 const D = GAME_DATA;
 const TILE = D.MAP.TILE_SIZE;
 const MW = D.MAP.WIDTH * TILE;
 const MH = D.MAP.HEIGHT * TILE;
-
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const rnd = (a, b) => Math.random() * (b - a) + a;
 const rndInt = (a, b) => Math.floor(rnd(a, b + 1));
 const pick = arr => arr[rndInt(0, arr.length - 1)];
-
 const RES_SPRITES = { wood:'sprite_wood', stone:'sprite_stone', herb:'sprite_herb', iron:'sprite_iron', fruit:'sprite_fruit' };
 const DINO_SPRITE_KEYS = {
     raptor:'sprite_dino_raptor', oviraptor:'sprite_dino_oviraptor', trike:'sprite_dino_trike',
     stego:'sprite_dino_stego', dilopho:'sprite_dino_dilopho', allo:'sprite_dino_allo',
     trex:'sprite_dino_trex', spino:'sprite_dino_spino'
 };
+const PLAYER_TINTS = [0xFFFFFF, 0x42A5F5, 0xFF5252, 0xFFD54F, 0x66BB6A, 0xAB47BC];
 
 // ============================================
 // Boot Scene
@@ -47,7 +46,6 @@ class MenuScene extends Phaser.Scene {
         this.add.text(w/2,h*0.15,'🦖',{fontSize:Math.min(60,w*0.15)+'px'}).setOrigin(0.5);
         this.add.text(w/2,h*0.27,'恐龍島求生記',{fontSize:Math.min(36,w*0.08)+'px',fill:'#A8D08D',fontFamily:'Arial',fontStyle:'bold',stroke:'#1B5E20',strokeThickness:4}).setOrigin(0.5);
         this.add.text(w/2,h*0.33,'DINO ISLAND SURVIVAL',{fontSize:Math.min(14,w*0.035)+'px',fill:'#66BB6A',fontFamily:'Arial'}).setOrigin(0.5);
-        // Mission description
         this.add.text(w/2,h*0.39,'🎯 任務: 在恐龍島上存活 10 天!',{fontSize:Math.min(14,w*0.035)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
 
         const tileKeys=['tile_camp','tile_grass','tile_forest','tile_swamp','tile_volcano'];
@@ -66,83 +64,493 @@ class MenuScene extends Phaser.Scene {
         const soloBtn=this.add.rectangle(w/2,h*0.72,btnW,btnH,0x2E7D32,0.9).setInteractive({useHandCursor:true});
         this.add.text(w/2,h*0.72,'🎮 單人冒險',{fontSize:'20px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
         soloBtn.on('pointerover',()=>soloBtn.setFillStyle(0x388E3C));soloBtn.on('pointerout',()=>soloBtn.setFillStyle(0x2E7D32));
-        soloBtn.on('pointerdown',()=>{AudioMgr.resume();AudioMgr.playClick();this.scene.start('Game');});
+        soloBtn.on('pointerdown',()=>{AudioMgr.resume();AudioMgr.playClick();this.scene.start('Game',{multi:false});});
 
         const multiBtn=this.add.rectangle(w/2,h*0.80,btnW,btnH,0x1565C0,0.9).setInteractive({useHandCursor:true});
-        this.add.text(w/2,h*0.80,'👥 多人房間',{fontSize:'20px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.80,'👥 多人連線',{fontSize:'20px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
         multiBtn.on('pointerover',()=>multiBtn.setFillStyle(0x1976D2));multiBtn.on('pointerout',()=>multiBtn.setFillStyle(0x1565C0));
         multiBtn.on('pointerdown',()=>{AudioMgr.resume();AudioMgr.playClick();this.scene.start('Lobby');});
 
         const isMobile=this.sys.game.device.input.touch;
-        this.add.text(w/2,h*0.88,isMobile?'觸控搖桿移動 | 點擊按鈕攻擊/採集':'WASD移動 | 空白鍵攻擊 | E採集 | I背包 | C合成',{fontSize:Math.min(12,w*0.03)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
-        this.add.text(w/2,h*0.94,'v2.2 — 10天生存挑戰 | 1~6人連線',{fontSize:'11px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.88,isMobile?'觸控搖桿移動 | 點擊按鈕操作':'WASD移動 | 空白鍵攻擊 | E採集 | I背包 | C合成',{fontSize:Math.min(12,w*0.03)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.94,'v3.0 — 10天生存 | 真實多人連線',{fontSize:'11px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
     }
 }
 
 // ============================================
-// Lobby Scene
+// Lobby Scene — 真實 PeerJS 連線
 // ============================================
 class LobbyScene extends Phaser.Scene {
     constructor(){super('Lobby');}
     create(){
         const w=this.cameras.main.width,h=this.cameras.main.height;
         this.add.rectangle(0,0,w,h,0x0a1a0a).setOrigin(0);
-        this.add.text(w/2,h*0.06,'👥 多人房間大廳',{fontSize:'22px',fill:'#42A5F5',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:3}).setOrigin(0.5);
-        this.roomId=this.genId();
-        this.add.rectangle(w/2,h*0.14,w*0.7,44,0x1a1a1a,0.8).setStrokeStyle(2,0x42A5F5);
-        this.add.text(w/2,h*0.14,`房間代碼: ${this.roomId}`,{fontSize:'18px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.05,'👥 多人連線大廳',{fontSize:'22px',fill:'#42A5F5',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:3}).setOrigin(0.5);
+
+        // Status text
+        this.statusTxt=this.add.text(w/2,h*0.11,'',{fontSize:'13px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(0.5);
+
+        // Room code display
+        this.codeBg=this.add.rectangle(w/2,h*0.17,w*0.7,44,0x1a1a1a,0.8).setStrokeStyle(2,0x42A5F5);
+        this.codeTxt=this.add.text(w/2,h*0.17,'',{fontSize:'18px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+
+        // Player slots
         this.playerSlots=[];
-        const slotW=w*0.8,slotH=52;
+        const slotW=w*0.8,slotH=48;
         for(let i=0;i<6;i++){
-            const sy=h*0.22+i*(slotH+8);
+            const sy=h*0.24+i*(slotH+6);
             const bg=this.add.rectangle(w/2,sy,slotW,slotH,0x1a1a1a,0.7).setStrokeStyle(1,0x444444);
-            const numTxt=this.add.text(w/2-slotW/2+16,sy,`P${i+1}`,{fontSize:'16px',fill:'#666',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0,0.5);
-            const nameTxt=this.add.text(w/2-slotW/2+60,sy,'',{fontSize:'14px',fill:'#fff',fontFamily:'Arial'}).setOrigin(0,0.5);
+            const numTxt=this.add.text(w/2-slotW/2+16,sy,`P${i+1}`,{fontSize:'15px',fill:'#666',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0,0.5);
+            const nameTxt=this.add.text(w/2-slotW/2+55,sy,'空位',{fontSize:'14px',fill:'#555',fontFamily:'Arial'}).setOrigin(0,0.5);
             const statusTxt=this.add.text(w/2+slotW/2-16,sy,'',{fontSize:'12px',fill:'#81C784',fontFamily:'Arial'}).setOrigin(1,0.5);
-            if(i===0){bg.setStrokeStyle(2,0x4CAF50);numTxt.setColor('#4CAF50');nameTxt.setText('你 (房主)');statusTxt.setText('✅ 準備');}
-            else{nameTxt.setText('等待加入...').setColor('#555');statusTxt.setText('空位').setColor('#555');}
             this.playerSlots.push({bg,numTxt,nameTxt,statusTxt});
         }
-        this.time.delayedCall(2000,()=>this.addSim('探險家小明',1));
-        this.time.delayedCall(4500,()=>this.addSim('恐龍獵人',2));
-        const joinY=h*0.72;
-        this.add.text(w/2,joinY-20,'或輸入代碼加入房間:',{fontSize:'12px',fill:'#aaa',fontFamily:'Arial'}).setOrigin(0.5);
-        this.add.rectangle(w/2,joinY+10,w*0.5,40,0x222222,0.9).setStrokeStyle(1,0x666666).setInteractive().on('pointerdown',()=>{const code=prompt('輸入房間代碼:');if(code&&code.length===6)this.showMsg('正在連線...','#42A5F5');});
-        this.add.text(w/2,joinY+10,'點擊輸入代碼',{fontSize:'14px',fill:'#666',fontFamily:'Arial'}).setOrigin(0.5);
-        const startBtn=this.add.rectangle(w/2,h*0.84,w*0.6,50,0x2E7D32,0.9).setInteractive({useHandCursor:true});
-        this.add.text(w/2,h*0.84,'🚀 開始遊戲',{fontSize:'20px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
-        startBtn.on('pointerdown',()=>{AudioMgr.playClick();this.time.delayedCall(500,()=>this.scene.start('Game'));});
-        this.add.text(w/2,h*0.92,'← 返回主選單',{fontSize:'14px',fill:'#FF5252',fontFamily:'Arial'}).setOrigin(0.5).setInteractive().on('pointerdown',()=>{AudioMgr.playClick();this.scene.start('Menu');});
-        this.msgTxt=this.add.text(w/2,h*0.78,'',{fontSize:'13px',fill:'#81C784',fontFamily:'Arial'}).setOrigin(0.5);
+
+        // Action buttons
+        const btnW=w*0.38,btnH=44;
+        const createBtn=this.add.rectangle(w*0.28,h*0.70,btnW,btnH,0x2E7D32,0.9).setInteractive({useHandCursor:true});
+        this.add.text(w*0.28,h*0.70,'🏠 建立房間',{fontSize:'16px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+        createBtn.on('pointerdown',()=>this.doCreateRoom());
+
+        const joinBtn=this.add.rectangle(w*0.72,h*0.70,btnW,btnH,0x1565C0,0.9).setInteractive({useHandCursor:true});
+        this.add.text(w*0.72,h*0.70,'🔗 加入房間',{fontSize:'16px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+        joinBtn.on('pointerdown',()=>this.doJoinRoom());
+
+        this.startBtn=this.add.rectangle(w/2,h*0.80,w*0.6,50,0x333333,0.5).setStrokeStyle(1,0x555);
+        this.startBtnTxt=this.add.text(w/2,h*0.80,'🚀 開始遊戲 (等待連線...)',{fontSize:'18px',fill:'#777',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5);
+
+        this.add.text(w/2,h*0.88,'← 返回主選單',{fontSize:'14px',fill:'#FF5252',fontFamily:'Arial'}).setOrigin(0.5)
+            .setInteractive().on('pointerdown',()=>{AudioMgr.playClick();NetMgr.destroy();this.scene.start('Menu');});
+
+        this.msgTxt=this.add.text(w/2,h*0.93,'',{fontSize:'12px',fill:'#81C784',fontFamily:'Arial'}).setOrigin(0.5);
+
+        // Setup network callbacks
+        NetMgr.onPlayerJoin=(id,name)=>{
+            this.showMsg(`${name} 加入了!`,'#42A5F5');
+            AudioMgr.playEquip();
+            this.refreshSlots();
+            this.updateStartBtn();
+        };
+        NetMgr.onPlayerLeave=(id)=>{
+            this.showMsg('有玩家離開了','#FF9800');
+            this.refreshSlots();
+            this.updateStartBtn();
+        };
+        NetMgr.onPlayerList=(players)=>{
+            this._clientPlayers=players;
+            this.refreshSlotsClient(players);
+        };
+        NetMgr.onStartGame=(data)=>{
+            // Client receives start signal
+            this.scene.start('Game',{multi:true,isHost:false,mapSeed:data.seed});
+        };
     }
-    genId(){const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let s='';for(let i=0;i<6;i++)s+=c[Math.floor(Math.random()*c.length)];return s;}
-    addSim(name,slot){if(slot>=6)return;const s=this.playerSlots[slot];s.bg.setStrokeStyle(1,0x42A5F5);s.numTxt.setColor('#42A5F5');s.nameTxt.setText(name).setColor('#fff');s.statusTxt.setText('✅ 準備').setColor('#81C784');this.showMsg(`${name} 加入了房間!`,'#42A5F5');AudioMgr.playEquip();}
-    showMsg(t,c){if(this.msgTxt)this.msgTxt.setText(t).setColor(c);this.time.delayedCall(3000,()=>{if(this.msgTxt)this.msgTxt.setText('');});}
+
+    async doCreateRoom(){
+        this.statusTxt.setText('正在建立房間...').setColor('#FFD54F');
+        try{
+            NetMgr.playerName='玩家1';
+            const code=await NetMgr.createRoom();
+            this.codeTxt.setText(`房間代碼: ${code}`);
+            this.codeBg.setStrokeStyle(2,0x4CAF50);
+            this.statusTxt.setText('房間已建立! 等待其他玩家加入...').setColor('#81C784');
+            this.refreshSlots();
+            this.updateStartBtn();
+        }catch(e){
+            this.statusTxt.setText('建立失敗: '+e.message).setColor('#FF5252');
+        }
+    }
+
+    async doJoinRoom(){
+        const code=prompt('請輸入6位房間代碼:');
+        if(!code||code.length!==6){this.showMsg('代碼必須為6位','#FF5252');return;}
+        this.statusTxt.setText('正在連線...').setColor('#FFD54F');
+        try{
+            NetMgr.playerName='玩家'+(Math.floor(Math.random()*99)+2);
+            await NetMgr.joinRoom(code);
+            this.codeTxt.setText(`已加入房間: ${code.toUpperCase()}`);
+            this.codeBg.setStrokeStyle(2,0x4CAF50);
+            this.statusTxt.setText('已連線! 等待房主開始遊戲...').setColor('#81C784');
+            // Client can't start game
+            this.startBtnTxt.setText('等待房主開始...');
+        }catch(e){
+            this.statusTxt.setText('加入失敗: '+e.message).setColor('#FF5252');
+        }
+    }
+
+    refreshSlots(){
+        if(!NetMgr.isHost)return;
+        const players=NetMgr.getPlayerList();
+        for(let i=0;i<6;i++){
+            const s=this.playerSlots[i];
+            if(i<players.length){
+                const p=players[i];
+                s.bg.setStrokeStyle(i===0?2:1,i===0?0x4CAF50:0x42A5F5);
+                s.numTxt.setColor(i===0?'#4CAF50':'#42A5F5');
+                s.nameTxt.setText(p.name).setColor('#fff');
+                s.statusTxt.setText('✅ 已連線').setColor('#81C784');
+            }else{
+                s.bg.setStrokeStyle(1,0x444444);
+                s.numTxt.setColor('#666');
+                s.nameTxt.setText('空位').setColor('#555');
+                s.statusTxt.setText('');
+            }
+        }
+    }
+
+    refreshSlotsClient(players){
+        for(let i=0;i<6;i++){
+            const s=this.playerSlots[i];
+            if(i<players.length){
+                const p=players[i];
+                s.bg.setStrokeStyle(p.host?2:1,p.host?0x4CAF50:0x42A5F5);
+                s.numTxt.setColor(p.host?'#4CAF50':'#42A5F5');
+                s.nameTxt.setText(p.name).setColor('#fff');
+                s.statusTxt.setText('✅ 已連線').setColor('#81C784');
+            }else{
+                s.bg.setStrokeStyle(1,0x444444);
+                s.numTxt.setColor('#666');
+                s.nameTxt.setText('空位').setColor('#555');
+                s.statusTxt.setText('');
+            }
+        }
+    }
+
+    updateStartBtn(){
+        if(!NetMgr.isHost)return;
+        const count=NetMgr.getPlayerCount();
+        if(count>=2){
+            this.startBtn.setFillStyle(0x2E7D32,0.9).setInteractive({useHandCursor:true});
+            this.startBtnTxt.setText(`🚀 開始遊戲 (${count}人)`).setColor('#fff');
+            this.startBtn.off('pointerdown').on('pointerdown',()=>{
+                AudioMgr.playClick();
+                const seed=Date.now();
+                NetMgr.sendStartGame({seed});
+                this.scene.start('Game',{multi:true,isHost:true,mapSeed:seed});
+            });
+        }else{
+            this.startBtn.setFillStyle(0x333333,0.5).removeInteractive();
+            this.startBtnTxt.setText('🚀 開始遊戲 (等待玩家...)').setColor('#777');
+        }
+    }
+
+    showMsg(t,c){this.msgTxt?.setText(t).setColor(c);this.time.delayedCall(3000,()=>{this.msgTxt?.setText('');});}
 }
 
 // ============================================
-// Game Scene — v2.2
+// Game Scene — v3.0 多人支援
 // ============================================
 class GameScene extends Phaser.Scene {
     constructor(){super('Game');}
-    create(){
+    create(data){
+        this.isMulti=data?.multi||false;
+        this.isHost=data?.isHost!==false;
+        this.mapSeed=data?.mapSeed||Date.now();
+
         this.mapData=[];this.resources=[];this.dinos=[];this.campfires=[];this.traps=[];this.arrows=[];
         this.gameTime=0;this.dayPhase=D.DAY_NIGHT.PHASES.DAY;this.dayTimer=0;
         this.kills=0;this.survivalTime=0;this.isMobile=this.sys.game.device.input.touch;
-        this._bossWarnCd=0;
-        // Day/survival tracking
-        this.currentDay=1;this.maxDays=10;this.dayCompleted=false;this.gameWon=false;
-        this.generateMap();this.createPlayer();this.spawnResources();this.spawnDinos();
+        this._bossWarnCd=0;this.currentDay=1;this.maxDays=10;this.gameWon=false;
+        this.moveVec={x:0,y:0};this._pendingAction=null;
+        this._removedResIds=[];this._nextResId=0;this._nextDinoId=0;
+
+        // Remote players map
+        this.remotePlayers=new Map();
+
+        // Seeded random for deterministic map
+        this._seed=this.mapSeed;
+        this.generateMap();
+        this.createPlayer();
+
+        if(!this.isMulti||this.isHost){
+            this.spawnResources();this.spawnDinos();
+        }
+
         this.setupCamera();this.setupInput();
         this.scene.launch('UI',{gameScene:this});
         AudioMgr.startBGM(0);
         this.time.addEvent({delay:D.PLAYER.HUNGER_INTERVAL,callback:this.tickHunger,callbackScope:this,loop:true});
         this.time.addEvent({delay:500,callback:()=>{if(!this.player.sprinting&&this.player.stamina<D.PLAYER.MAX_STAMINA)this.player.stamina=Math.min(D.PLAYER.MAX_STAMINA,this.player.stamina+D.PLAYER.STAMINA_REGEN*2);},loop:true});
-        this.time.addEvent({delay:30000,callback:this.respawnResources,callbackScope:this,loop:true});
-        this.time.addEvent({delay:45000,callback:this.respawnDinos,callbackScope:this,loop:true});
+
+        if(!this.isMulti||this.isHost){
+            this.time.addEvent({delay:30000,callback:this.respawnResources,callbackScope:this,loop:true});
+            this.time.addEvent({delay:45000,callback:this.respawnDinos,callbackScope:this,loop:true});
+        }
+
+        if(this.isMulti) this.setupNetwork();
     }
 
-    // ===== Day/Night cycle info =====
+    // ===== Multiplayer Network =====
+    setupNetwork(){
+        if(this.isHost){
+            // Create remote player sprites for each connected client
+            NetMgr.connections.forEach((conn,i)=>{
+                this.createRemotePlayer(conn.peer,conn.playerName||`玩家${i+2}`,i+1);
+            });
+            // Handle new connections mid-game
+            NetMgr.onPlayerJoin=(id,name)=>{
+                const idx=this.remotePlayers.size+1;
+                this.createRemotePlayer(id,name,idx);
+                // Send init data to new player
+                this.sendInitToPlayer(id);
+            };
+            NetMgr.onPlayerLeave=(id)=>this.removeRemotePlayer(id);
+            NetMgr.onPlayerInput=(id,data)=>this.handleRemoteInput(id,data);
+
+            // Send init to all current clients
+            this.time.delayedCall(500,()=>{
+                NetMgr.connections.forEach(conn=>{
+                    this.sendInitToPlayer(conn.peer);
+                });
+            });
+
+            // Broadcast state at 10fps
+            this.time.addEvent({delay:100,callback:()=>this.broadcastState(),loop:true});
+        }else{
+            // Client mode
+            NetMgr.onInitData=(data)=>this.applyInitData(data);
+            NetMgr.onStateUpdate=(data)=>this.applyStateUpdate(data);
+
+            // Send input at 20fps
+            this.time.addEvent({delay:50,callback:()=>this.sendInputToHost(),loop:true});
+        }
+    }
+
+    createRemotePlayer(peerId,name,index){
+        const cx=MW/2+rnd(-60,60),cy=MH/2+rnd(-60,60);
+        let sprite;
+        if(this.textures.exists('sprite_player')){
+            sprite=this.add.image(cx,cy,'sprite_player').setDepth(10);
+            const pScale=(TILE*1.2)/Math.max(sprite.width,sprite.height);
+            sprite.setScale(pScale);
+        }else{
+            sprite=this.add.rectangle(cx,cy,TILE*0.8,TILE*0.8,PLAYER_TINTS[index%6]).setDepth(10);
+        }
+        if(sprite.setTint)sprite.setTint(PLAYER_TINTS[index%6]);
+        this.physics.add.existing(sprite);sprite.body.setCollideWorldBounds(true);
+        const shadow=this.add.ellipse(cx,cy+12,20,8,0x000000,0.2).setDepth(9);
+        const nameTxt=this.add.text(cx,cy-24,name,{fontSize:'10px',fill:'#42A5F5',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setDepth(11);
+        const rp={sprite,shadow,nameTxt,peerId,name,index,
+            hp:D.PLAYER.MAX_HP,hunger:D.PLAYER.MAX_HUNGER,stamina:D.PLAYER.MAX_STAMINA,
+            atk:D.PLAYER.ATTACK_BASE,def:D.PLAYER.DEFENSE_BASE,
+            alive:true,facing:{x:0,y:1},inventory:[],equipped:{weapon:null,armor:null}};
+        this.remotePlayers.set(peerId,rp);
+        return rp;
+    }
+
+    removeRemotePlayer(peerId){
+        const rp=this.remotePlayers.get(peerId);
+        if(rp){
+            rp.sprite.destroy();rp.shadow.destroy();rp.nameTxt.destroy();
+            this.remotePlayers.delete(peerId);
+        }
+    }
+
+    sendInitToPlayer(peerId){
+        const conn=NetMgr.connections.find(c=>c.peer===peerId);
+        if(!conn||!conn.open)return;
+        const resData=this.resources.filter(r=>r.active!==false).map(r=>({id:r.resId,x:Math.round(r.x),y:Math.round(r.y),t:r.type}));
+        try{
+            conn.send({t:'init',map:this.mapData,res:resData,dt:Math.round(this.dayTimer),cd:this.currentDay});
+        }catch(e){}
+    }
+
+    broadcastState(){
+        if(!NetMgr.isHost)return;
+        // Build compact player array: host + remotes
+        const players=[{id:'host',x:Math.round(this.player.x),y:Math.round(this.player.y),
+            hp:Math.round(this.player.hp),hu:Math.round(this.player.hunger),
+            fx:this.player.facing.x,fy:this.player.facing.y,a:this.player.alive?1:0,
+            n:NetMgr.playerName||'房主'}];
+        this.remotePlayers.forEach((rp,id)=>{
+            players.push({id,x:Math.round(rp.sprite.x),y:Math.round(rp.sprite.y),
+                hp:Math.round(rp.hp),hu:Math.round(rp.hunger),
+                fx:rp.facing.x,fy:rp.facing.y,a:rp.alive?1:0,n:rp.name});
+        });
+        // Build compact dino array
+        const dinos=this.dinos.filter(d=>d.alive).map(d=>({
+            id:d.dinoId,x:Math.round(d.x),y:Math.round(d.y),
+            hp:d.hp,mhp:d.maxHp,k:d.key,al:Math.round(d.alpha*10)/10,st:d.state
+        }));
+
+        const state={t:'s',p:players,d:dinos,rm:this._removedResIds,
+            dt:Math.round(this.dayTimer),dp:this.dayPhase,k:this.kills,cd:this.currentDay};
+        NetMgr.broadcast(state);
+        this._removedResIds=[];
+    }
+
+    handleRemoteInput(peerId,data){
+        if(!data)return;
+        const rp=this.remotePlayers.get(peerId);
+        if(!rp)return;
+        // Update position
+        if(data.x!==undefined){
+            rp.sprite.x=data.x;rp.sprite.y=data.y;
+            rp.shadow.setPosition(data.x,data.y+12);
+            rp.nameTxt.setPosition(data.x,data.y-24);
+        }
+        if(data.fx!==undefined)rp.facing={x:data.fx,y:data.fy};
+        if(rp.sprite.setFlipX)rp.sprite.setFlipX(rp.facing.x<0);
+
+        // Process actions
+        if(data.act==='attack')this.remoteAttack(rp);
+        else if(data.act==='gather')this.remoteGather(rp);
+    }
+
+    remoteAttack(rp){
+        AudioMgr.playAttack();
+        const range=50,fx=rp.facing;
+        const ax=rp.sprite.x+fx.x*20,ay=rp.sprite.y+fx.y*20;
+        const slash=this.add.arc(ax,ay,range/2,0,180,false,0xFFFFFF,0.5).setDepth(20);
+        this.tweens.add({targets:slash,alpha:0,scale:1.5,duration:200,onComplete:()=>slash.destroy()});
+        this.dinos.forEach(dino=>{if(!dino.alive)return;if(dist({x:ax,y:ay},dino)<range){
+            const dmg=Math.max(1,rp.atk-(dino.dinoData.def||0)/2);this.damageDino(dino,dmg);
+            if(dino.dinoData.passive&&dino.state==='patrol')dino.state='chase';
+        }});
+    }
+
+    remoteGather(rp){
+        let closest=null,minD=55;
+        this.resources.forEach(r=>{const d=dist(r,rp.sprite);if(d<minD){minD=d;closest=r;}});
+        if(closest){
+            this._removedResIds.push(closest.resId);
+            AudioMgr.playGather();
+            for(let i=0;i<3;i++){const p=this.add.circle(closest.x+rnd(-5,5),closest.y+rnd(-5,5),2,0x81C784,0.7).setDepth(20);this.tweens.add({targets:p,y:p.y-20,alpha:0,duration:400,onComplete:()=>p.destroy()});}
+            closest.destroy();this.resources=this.resources.filter(r=>r!==closest);
+        }
+    }
+
+    sendInputToHost(){
+        if(!this.player?.alive)return;
+        const data={
+            x:Math.round(this.player.x),y:Math.round(this.player.y),
+            fx:this.player.facing.x,fy:this.player.facing.y
+        };
+        if(this._pendingAction){data.act=this._pendingAction;this._pendingAction=null;}
+        NetMgr.sendToHost(data);
+    }
+
+    applyInitData(data){
+        if(!data)return;
+        // Apply map if provided
+        if(data.map)this.mapData=data.map;
+        // Create resources from host data
+        if(data.res){
+            // Clear existing
+            this.resources.forEach(r=>r.destroy());this.resources=[];
+            data.res.forEach(r=>{ this.createResource(r.t,r.x,r.y,r.id); });
+        }
+        if(data.dt!==undefined)this.dayTimer=data.dt;
+        if(data.cd!==undefined)this.currentDay=data.cd;
+    }
+
+    applyStateUpdate(data){
+        if(!data)return;
+        // Update day timer
+        if(data.dt!==undefined)this.dayTimer=data.dt;
+        if(data.dp!==undefined)this.dayPhase=data.dp;
+        if(data.k!==undefined)this.kills=data.k;
+        if(data.cd!==undefined)this.currentDay=data.cd;
+
+        // Update/create remote player sprites
+        if(data.p){
+            data.p.forEach(pd=>{
+                if(pd.id==='host'||pd.id===NetMgr.myId){
+                    // This is us (client) or the host — for client, update host sprite
+                    if(pd.id!=='host'||!this.isHost){
+                        // Update/create host player sprite on client
+                        if(!this.remotePlayers.has(pd.id)){
+                            if(pd.id!==NetMgr.myId){
+                                this.createRemotePlayer(pd.id,pd.n||'房主',0);
+                            }
+                        }
+                        const rp=this.remotePlayers.get(pd.id);
+                        if(rp){
+                            rp.sprite.x=pd.x;rp.sprite.y=pd.y;
+                            rp.shadow.setPosition(pd.x,pd.y+12);
+                            rp.nameTxt.setPosition(pd.x,pd.y-24);
+                            if(rp.sprite.setFlipX)rp.sprite.setFlipX(pd.fx<0);
+                        }
+                    }
+                }else if(pd.id!==NetMgr.myId){
+                    // Other remote player
+                    if(!this.remotePlayers.has(pd.id)){
+                        this.createRemotePlayer(pd.id,pd.n||'玩家',this.remotePlayers.size+1);
+                    }
+                    const rp=this.remotePlayers.get(pd.id);
+                    if(rp){
+                        rp.sprite.x=pd.x;rp.sprite.y=pd.y;
+                        rp.shadow.setPosition(pd.x,pd.y+12);
+                        rp.nameTxt.setPosition(pd.x,pd.y-24);
+                        if(rp.sprite.setFlipX)rp.sprite.setFlipX(pd.fx<0);
+                    }
+                }
+            });
+        }
+
+        // Update dinos on client
+        if(data.d&&!this.isHost){
+            const existingIds=new Set();
+            data.d.forEach(dd=>{
+                existingIds.add(dd.id);
+                let dino=this.dinos.find(d=>d.dinoId===dd.id);
+                if(!dino){
+                    // Create new dino sprite
+                    dino=this._createClientDino(dd);
+                }
+                if(dino){
+                    dino.x=dd.x;dino.y=dd.y;dino.hp=dd.hp;dino.maxHp=dd.mhp;
+                    dino.setAlpha(dd.al);
+                    if(dino.body)dino.body.enable=dd.al>0;
+                    if(dino.hpBg){dino.hpBg.setPosition(dd.x,dd.y-20).setAlpha(dd.al);}
+                    if(dino.hpBar){dino.hpBar.setPosition(dd.x-dino.hpBarW/2,dd.y-20);dino.hpBar.width=dino.hpBarW*(dd.hp/dd.mhp);dino.hpBar.setAlpha(dd.al);}
+                    if(dino.nameTxt)dino.nameTxt.setPosition(dd.x,dd.y-30).setAlpha(dd.al);
+                    if(dino.shadow)dino.shadow.setPosition(dd.x,dd.y+15).setAlpha(dd.al>0?0.15:0);
+                }
+            });
+            // Remove dinos not in state
+            this.dinos=this.dinos.filter(d=>{
+                if(!existingIds.has(d.dinoId)){
+                    d.destroy();if(d.hpBg)d.hpBg.destroy();if(d.hpBar)d.hpBar.destroy();
+                    if(d.nameTxt)d.nameTxt.destroy();if(d.shadow)d.shadow.destroy();
+                    return false;
+                }return true;
+            });
+        }
+
+        // Remove gathered resources
+        if(data.rm&&data.rm.length>0){
+            data.rm.forEach(rid=>{
+                const idx=this.resources.findIndex(r=>r.resId===rid);
+                if(idx>=0){this.resources[idx].destroy();this.resources.splice(idx,1);}
+            });
+        }
+    }
+
+    _createClientDino(dd){
+        const dinoData=D.DINOS[dd.k];
+        if(!dinoData)return null;
+        const sk=DINO_SPRITE_KEYS[dd.k];let dino;
+        if(sk&&this.textures.exists(sk)){
+            dino=this.add.image(dd.x,dd.y,sk).setDepth(5);
+            const s=(dinoData.size*1.5)/Math.max(dino.width,dino.height);dino.setScale(s);
+        }else{
+            dino=this.add.circle(dd.x,dd.y,dinoData.size/2,dinoData.color).setDepth(5);
+        }
+        this.physics.add.existing(dino,true);
+        dino.dinoId=dd.id;dino.key=dd.k;dino.hp=dd.hp;dino.maxHp=dd.mhp;dino.alive=true;
+        dino.dinoData=dinoData;
+        const shadow=this.add.ellipse(dd.x,dd.y+15,dinoData.size*0.8,dinoData.size*0.25,0x000000,0.15).setDepth(4);
+        const barW=dinoData.boss?50:30,barH=dinoData.boss?6:4;
+        dino.hpBg=this.add.rectangle(dd.x,dd.y-20,barW,barH,0x333333).setDepth(6);
+        dino.hpBar=this.add.rectangle(dd.x-barW/2,dd.y-20,barW,barH,dinoData.boss?0xFF6D00:0xFF1744).setDepth(7).setOrigin(0,0.5);
+        dino.hpBarW=barW;
+        dino.nameTxt=this.add.text(dd.x,dd.y-30,(dinoData.boss?'👑 ':'')+dinoData.name,{fontSize:dinoData.boss?'13px':'10px',fill:dinoData.boss?'#FFD54F':'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setDepth(7);
+        dino.shadow=shadow;
+        this.dinos.push(dino);return dino;
+    }
+
+    // ===== Day/Night =====
     get dayCycleLength(){const{DAY_DURATION,DUSK_DURATION,NIGHT_DURATION}=D.DAY_NIGHT;return DAY_DURATION+DUSK_DURATION+NIGHT_DURATION;}
     get dayProgress(){return this.dayTimer%this.dayCycleLength;}
     get phaseTimeLeft(){
@@ -151,16 +559,18 @@ class GameScene extends Phaser.Scene {
         if(t<DAY_DURATION+DUSK_DURATION)return{phase:'dusk',left:DAY_DURATION+DUSK_DURATION-t,total:DUSK_DURATION};
         return{phase:'night',left:this.dayCycleLength-t,total:NIGHT_DURATION};
     }
-    // Difficulty multiplier based on current day
-    get difficultyMult(){return 1+(this.currentDay-1)*0.2;} // +20% per day
+    get difficultyMult(){return 1+(this.currentDay-1)*0.2;}
 
     // ===== Map =====
     generateMap(){
         const W=D.MAP.WIDTH,H=D.MAP.HEIGHT,cx=W/2,cy=H/2;
+        // Use seed for deterministic map
+        let s=this._seed;
+        const sRnd=()=>{s=(s*16807+0)%2147483647;return(s&0x7fffffff)/2147483647;};
         for(let y=0;y<H;y++){this.mapData[y]=[];for(let x=0;x<W;x++){
             const d=Math.hypot(x-cx,y-cy);let b;
             if(d<5)b=0;else if(d<20)b=1;else if(d<32)b=2;else if(d<38)b=3;else b=4;
-            if(b>0&&b<4&&Math.random()<0.1)b=clamp(b+(Math.random()>0.5?1:-1),1,4);
+            if(b>0&&b<4&&sRnd()<0.1)b=clamp(b+(sRnd()>0.5?1:-1),1,4);
             this.mapData[y][x]=b;
         }}
         this.renderMap();
@@ -186,7 +596,6 @@ class GameScene extends Phaser.Scene {
         this.physics.add.existing(this.player);this.player.body.setCollideWorldBounds(true);
         const bs=TILE*0.6;this.player.body.setSize(bs,bs);this.player.body.setOffset((this.player.width-bs)/2,(this.player.height-bs)/2);
         this.playerShadow=this.add.ellipse(cx,cy+12,20,8,0x000000,0.2).setDepth(9);
-        // Torch light visual (hidden by default)
         this.torchLight=this.add.circle(cx,cy,80,0xFF8F00,0).setDepth(1);
         Object.assign(this.player,{hp:D.PLAYER.MAX_HP,maxHp:D.PLAYER.MAX_HP,hunger:D.PLAYER.MAX_HUNGER,maxHunger:D.PLAYER.MAX_HUNGER,
             stamina:D.PLAYER.MAX_STAMINA,maxStamina:D.PLAYER.MAX_STAMINA,atk:D.PLAYER.ATTACK_BASE,def:D.PLAYER.DEFENSE_BASE,
@@ -197,11 +606,11 @@ class GameScene extends Phaser.Scene {
 
     // ===== Resources =====
     spawnResources(){for(let y=0;y<D.MAP.HEIGHT;y++)for(let x=0;x<D.MAP.WIDTH;x++){const b=this.mapData[y][x];if(b===0)continue;for(const[key,res]of Object.entries(D.RESOURCES))if(res.biomes.includes(b)&&Math.random()<res.rate)this.createResource(key,x*TILE+TILE/2,y*TILE+TILE/2);}}
-    createResource(type,x,y){
+    createResource(type,x,y,id){
         let sk=RES_SPRITES[type];if(type==='wood'&&Math.random()<0.4&&this.textures.exists('sprite_wood2'))sk='sprite_wood2';
         let r;if(sk&&this.textures.exists(sk)){r=this.add.image(x,y,sk).setDepth(3);r.setScale((type==='wood'?TILE*1.4:TILE*1.0)/Math.max(r.width,r.height));}
         else{const c={wood:0x8D6E63,stone:0x9E9E9E,herb:0x4CAF50,iron:0xB0BEC5,fruit:0xE91E63};r=this.add.circle(x,y,7,c[type]||0xFFFFFF).setDepth(3);}
-        this.physics.add.existing(r,true);r.type=type;
+        this.physics.add.existing(r,true);r.type=type;r.resId=id!==undefined?id:this._nextResId++;
         this.tweens.add({targets:r,y:y-2,yoyo:true,repeat:-1,duration:1500+Math.random()*1000,ease:'Sine.easeInOut'});
         this.resources.push(r);return r;
     }
@@ -219,9 +628,9 @@ class GameScene extends Phaser.Scene {
         this.physics.add.existing(dino);dino.body.setCollideWorldBounds(true);
         const br=data.size*0.5;if(dino.type==='Image'){dino.body.setSize(br*2,br*2);dino.body.setOffset((dino.width-br*2)/2,(dino.height-br*2)/2);}else dino.body.setCircle(data.size/2);
         const shadow=this.add.ellipse(px,py+data.size*0.4,data.size*0.8,data.size*0.25,0x000000,0.15).setDepth(4);
-        // Apply difficulty scaling to HP and ATK
         const dm=this.difficultyMult;
-        Object.assign(dino,{key,dinoData:{...data,hp:Math.floor(data.hp*dm),atk:Math.floor(data.atk*dm)},hp:Math.floor(data.hp*dm),maxHp:Math.floor(data.hp*dm),
+        const dinoId=this._nextDinoId++;
+        Object.assign(dino,{key,dinoId,dinoData:{...data,hp:Math.floor(data.hp*dm),atk:Math.floor(data.atk*dm)},hp:Math.floor(data.hp*dm),maxHp:Math.floor(data.hp*dm),
             state:'patrol',patrolTarget:{x:px+rnd(-100,100),y:py+rnd(-100,100)},homeX:px,homeY:py,attackCd:0,alive:true,shadow,bossWarned:false});
         const barW=data.boss?50:30,barH=data.boss?6:4;
         dino.hpBg=this.add.rectangle(px,py-data.size-4,barW,barH,0x333333).setDepth(6);
@@ -233,7 +642,6 @@ class GameScene extends Phaser.Scene {
     }
     respawnDinos(){
         const alive=this.dinos.filter(d=>d.alive).length;
-        // More dinos at night and on later days
         const isNight=this.dayPhase===D.DAY_NIGHT.PHASES.NIGHT;
         const targetCount=15+this.currentDay*3+(isNight?10:0);
         if(alive<targetCount){
@@ -253,13 +661,6 @@ class GameScene extends Phaser.Scene {
     // ===== Input =====
     setupInput(){
         this.keys=this.input.keyboard?.addKeys({w:'W',a:'A',s:'S',d:'D',space:'SPACE',e:'E',i:'I',c:'C',f:'F',shift:'SHIFT',esc:'ESC'});
-        if(this.isMobile)this.setupTouch();this.moveVec={x:0,y:0};
-    }
-    setupTouch(){
-        this.joystick={active:false,baseX:0,baseY:0,dx:0,dy:0};
-        this.input.on('pointerdown',p=>{if(p.x<this.cameras.main.width*0.4&&p.y>this.cameras.main.height*0.5){this.joystick.active=true;this.joystick.baseX=p.x;this.joystick.baseY=p.y;}});
-        this.input.on('pointermove',p=>{if(this.joystick.active){this.joystick.dx=clamp((p.x-this.joystick.baseX)/50,-1,1);this.joystick.dy=clamp((p.y-this.joystick.baseY)/50,-1,1);}});
-        this.input.on('pointerup',()=>{this.joystick.active=false;this.joystick.dx=0;this.joystick.dy=0;});
     }
 
     // ===== Inventory =====
@@ -267,8 +668,6 @@ class GameScene extends Phaser.Scene {
     removeItem(id,qty=1){const inv=this.player.inventory;let rem=qty;for(let i=inv.length-1;i>=0;i--){if(inv[i].id===id){const t=Math.min(rem,inv[i].qty);inv[i].qty-=t;rem-=t;if(inv[i].qty<=0)inv.splice(i,1);if(rem<=0)return true;}}return rem<=0;}
     countItem(id){return this.player.inventory.reduce((s,sl)=>sl.id===id?s+sl.qty:s,0);}
     hasItems(mats){return Object.entries(mats).every(([id,qty])=>this.countItem(id)>=qty);}
-
-    // Find inventory slot index by item id
     findItemSlot(id){return this.player.inventory.findIndex(s=>s.id===id);}
 
     useItem(slot){
@@ -291,14 +690,13 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    // ===== Place items (torch/campfire/trap) =====
+    // ===== Placeables =====
     usePlaceable(item,def,slot){
         const px=this.player.x,py=this.player.y;
         if(item.id==='torch'){
             this.player.torchActive=true;this.player.lightRadius=def.light;
             this.torchLight.setAlpha(0.08).setRadius(def.light/2);
             item.qty--;if(item.qty<=0)this.player.inventory.splice(slot,1);
-            // Place a torch sprite on map
             const torch=this.textures.exists('sprite_torch')?this.add.image(px+rnd(-10,10),py+rnd(-10,10),'sprite_torch').setDepth(4).setDisplaySize(TILE,TILE*1.2):this.add.circle(px,py,5,0xFF6D00).setDepth(4);
             const tGlow=this.add.circle(torch.x,torch.y,def.light/4,0xFF8F00,0.06).setDepth(3);
             this.tweens.add({targets:tGlow,alpha:0.1,yoyo:true,repeat:-1,duration:500});
@@ -327,14 +725,13 @@ class GameScene extends Phaser.Scene {
     canCraft(recipe){if(!this.hasItems(recipe.mats))return false;if(recipe.needFire){const nf=this.campfires.some(cf=>dist(cf,this.player)<150);if(!nf&&!this.isInCamp(this.player.x,this.player.y))return false;}return true;}
     craft(recipe){if(!this.canCraft(recipe))return false;for(const[id,qty]of Object.entries(recipe.mats))this.removeItem(id,qty);this.addItem(recipe.result,recipe.qty);this.showFloatingText(this.player.x,this.player.y-20,`合成 ${D.ITEMS[recipe.result].name} x${recipe.qty}`,'#FFC107');AudioMgr.playCraft();return true;}
 
-    // ===== Combat — melee + ranged (bow) =====
+    // ===== Combat =====
     playerAttack(){
         if(!this.player.alive)return;
+        if(this.isMulti&&!this.isHost){this._pendingAction='attack';return;}
         const weapon=this.player.equipped.weapon;
         const wDef=weapon?D.ITEMS[weapon]:null;
-        // Ranged attack with bow
         if(wDef&&wDef.ranged){this.shootArrow();return;}
-        // Melee
         AudioMgr.playAttack();
         const range=50+(wDef?.range||1)*10;
         const fx=this.player.facing,ax=this.player.x+fx.x*20,ay=this.player.y+fx.y*20;
@@ -348,50 +745,28 @@ class GameScene extends Phaser.Scene {
         }});
     }
 
-    // ===== Arrow projectile =====
     shootArrow(){
         AudioMgr.playAttack();
         const p=this.player,fx=p.facing;
         let arrow;
         if(this.textures.exists('sprite_arrow')){
             arrow=this.add.image(p.x,p.y,'sprite_arrow').setDepth(15);
-            arrow.setAngle(Math.atan2(fx.y,fx.x)*180/Math.PI);
-            arrow.setScale(1.5);
-        }else{
-            arrow=this.add.rectangle(p.x,p.y,12,3,0x8D6E63).setDepth(15);
-            arrow.setAngle(Math.atan2(fx.y,fx.x)*180/Math.PI);
-        }
-        this.physics.add.existing(arrow);
-        const speed=400;
-        arrow.body.setVelocity(fx.x*speed,fx.y*speed);
-        arrow.dmg=this.player.atk;
-        arrow.life=1500; // ms before auto-destroy
-        this.arrows.push(arrow);
-        // Trail effect
-        this.time.addEvent({delay:50,repeat:8,callback:()=>{
-            if(!arrow.active)return;
-            const t=this.add.circle(arrow.x,arrow.y,1.5,0xFFFFFF,0.4).setDepth(14);
-            this.tweens.add({targets:t,alpha:0,scale:0,duration:200,onComplete:()=>t.destroy()});
-        }});
+            arrow.setAngle(Math.atan2(fx.y,fx.x)*180/Math.PI);arrow.setScale(1.5);
+        }else{arrow=this.add.rectangle(p.x,p.y,12,3,0x8D6E63).setDepth(15);arrow.setAngle(Math.atan2(fx.y,fx.x)*180/Math.PI);}
+        this.physics.add.existing(arrow);arrow.body.setVelocity(fx.x*400,fx.y*400);
+        arrow.dmg=this.player.atk;arrow.life=1500;this.arrows.push(arrow);
+        this.time.addEvent({delay:50,repeat:8,callback:()=>{if(!arrow.active)return;const t=this.add.circle(arrow.x,arrow.y,1.5,0xFFFFFF,0.4).setDepth(14);this.tweens.add({targets:t,alpha:0,scale:0,duration:200,onComplete:()=>t.destroy()});}});
     }
 
     updateArrows(delta){
         for(let i=this.arrows.length-1;i>=0;i--){
             const arrow=this.arrows[i];
             if(!arrow.active){this.arrows.splice(i,1);continue;}
-            arrow.life-=delta;
-            if(arrow.life<=0){arrow.destroy();this.arrows.splice(i,1);continue;}
-            // Hit detection against dinos
+            arrow.life-=delta;if(arrow.life<=0){arrow.destroy();this.arrows.splice(i,1);continue;}
             let hit=false;
-            this.dinos.forEach(dino=>{
-                if(!dino.alive||hit)return;
-                if(dist(arrow,dino)<dino.dinoData.size){
-                    const dmg=Math.max(1,arrow.dmg-dino.dinoData.def/2);
-                    this.damageDino(dino,dmg);
-                    if(dino.dinoData.passive&&dino.state==='patrol')dino.state='chase';
-                    hit=true;
-                }
-            });
+            this.dinos.forEach(dino=>{if(!dino.alive||hit)return;if(dist(arrow,dino)<(dino.dinoData?.size||20)){
+                const dmg=Math.max(1,arrow.dmg-(dino.dinoData?.def||0)/2);this.damageDino(dino,dmg);
+                if(dino.dinoData?.passive&&dino.state==='patrol')dino.state='chase';hit=true;}});
             if(hit){arrow.destroy();this.arrows.splice(i,1);}
         }
     }
@@ -400,15 +775,15 @@ class GameScene extends Phaser.Scene {
         dino.hp-=dmg;this.showFloatingText(dino.x,dino.y-20,`-${Math.floor(dmg)}`,'#FF5252');AudioMgr.playHit();
         if(dino.setTint){dino.setTint(0xFF0000);this.time.delayedCall(120,()=>{if(dino.alive&&dino.clearTint)dino.clearTint();});}
         const dx=dino.x-this.player.x,dy=dino.y-this.player.y,len=Math.hypot(dx,dy)||1;dino.x+=(dx/len)*3;dino.y+=(dy/len)*3;
-        if(dino.dinoData.flee)dino.state='flee';else if(dino.state==='patrol')dino.state='chase';
+        if(dino.dinoData?.flee)dino.state='flee';else if(dino.state==='patrol')dino.state='chase';
         if(dino.hp<=0)this.killDino(dino);
     }
     killDino(dino){
         dino.alive=false;dino.state='dead';this.kills++;
-        dino.dinoData.drops.forEach(([id,qty])=>{if(Math.random()<0.8)this.addItem(id,qty);});
-        this.showFloatingText(dino.x,dino.y-30,`+${dino.dinoData.xp} XP`,'#FFD54F');AudioMgr.playDinoDeath();
+        if(dino.dinoData?.drops)dino.dinoData.drops.forEach(([id,qty])=>{if(Math.random()<0.8)this.addItem(id,qty);});
+        this.showFloatingText(dino.x,dino.y-30,`+${dino.dinoData?.xp||0} XP`,'#FFD54F');AudioMgr.playDinoDeath();
         for(let i=0;i<6;i++){const p=this.add.circle(dino.x+rnd(-10,10),dino.y+rnd(-10,10),3,0xFFFFFF,0.6).setDepth(20);this.tweens.add({targets:p,x:p.x+rnd(-30,30),y:p.y+rnd(-30,30),alpha:0,scale:0,duration:400,onComplete:()=>p.destroy()});}
-        this.tweens.add({targets:[dino,dino.hpBg,dino.hpBar,dino.nameTxt,dino.shadow],alpha:0,duration:500,onComplete:()=>{dino.destroy();dino.hpBg.destroy();dino.hpBar.destroy();dino.nameTxt.destroy();if(dino.shadow)dino.shadow.destroy();}});
+        this.tweens.add({targets:[dino,dino.hpBg,dino.hpBar,dino.nameTxt,dino.shadow].filter(Boolean),alpha:0,duration:500,onComplete:()=>{dino.destroy();if(dino.hpBg)dino.hpBg.destroy();if(dino.hpBar)dino.hpBar.destroy();if(dino.nameTxt)dino.nameTxt.destroy();if(dino.shadow)dino.shadow.destroy();}});
         this.dinos=this.dinos.filter(d=>d!==dino);
     }
     damagePlayer(dmg,label=''){
@@ -428,12 +803,25 @@ class GameScene extends Phaser.Scene {
 
     // ===== Gather =====
     gather(){
-        if(!this.player.alive)return;let closest=null,minD=45;
+        if(!this.player.alive)return;
+        if(this.isMulti&&!this.isHost){this._pendingAction='gather';return;}
+        let closest=null,minD=45;
         this.resources.forEach(r=>{const d=dist(r,this.player);if(d<minD){minD=d;closest=r;}});
-        if(closest){if(this.addItem(closest.type,1)){this.showFloatingText(closest.x,closest.y-10,`+1 ${D.RESOURCES[closest.type].name}`,'#81C784');AudioMgr.playGather();
+        if(closest){if(this.addItem(closest.type,1)){
+            this.showFloatingText(closest.x,closest.y-10,`+1 ${D.RESOURCES[closest.type].name}`,'#81C784');AudioMgr.playGather();
+            if(this.isMulti)this._removedResIds.push(closest.resId);
             for(let i=0;i<4;i++){const p=this.add.circle(closest.x+rnd(-5,5),closest.y+rnd(-5,5),2,0x81C784,0.7).setDepth(20);this.tweens.add({targets:p,y:p.y-20,alpha:0,duration:400,onComplete:()=>p.destroy()});}
             closest.destroy();this.resources=this.resources.filter(r=>r!==closest);
         }else this.showFloatingText(this.player.x,this.player.y-20,'背包已滿!','#FF5252');}
+    }
+
+    // Smart action: auto-detect attack or gather
+    smartAction(){
+        if(!this.player.alive)return;
+        let nearRes=false,minD=50;
+        this.resources.forEach(r=>{if(dist(r,this.player)<minD)nearRes=true;});
+        if(nearRes)this.gather();
+        else this.playerAttack();
     }
 
     // ===== Systems =====
@@ -448,18 +836,35 @@ class GameScene extends Phaser.Scene {
         if(this.gameWon)return;
         if(!this.player.alive)return;
         this.gameTime+=delta;this.survivalTime+=delta;
-        this.updateDayNight(delta);
+
+        if(!this.isMulti||this.isHost){
+            this.updateDayNight(delta);
+            this.updateDinoAI(delta);
+        }else{
+            // Client: just update visual overlay from received dayPhase
+            this.updateDayVisuals();
+        }
+
         this.updatePlayerMovement();
-        this.updateDinoAI(delta);
         this.updateArrows(delta);
-        this.updateSwampDamage(delta);
-        this.updateBossWarning(delta);
+
+        if(!this.isMulti||this.isHost){
+            this.updateSwampDamage(delta);
+            this.updateBossWarning(delta);
+        }
+
         if(this.playerShadow)this.playerShadow.setPosition(this.player.x,this.player.y+12);
-        // Torch light follows player
         if(this.torchLight&&this.player.torchActive)this.torchLight.setPosition(this.player.x,this.player.y);
         if(this.player.facing.x<0&&this.player.setFlipX)this.player.setFlipX(true);
         else if(this.player.facing.x>0&&this.player.setFlipX)this.player.setFlipX(false);
         if(this.player.body.velocity.length()>10)this.player.y+=Math.sin(time*0.008)*0.3;
+    }
+
+    updateDayVisuals(){
+        const t=this.dayTimer%this.dayCycleLength;
+        if(t<D.DAY_NIGHT.DAY_DURATION){this.overlay.setAlpha(0);}
+        else if(t<D.DAY_NIGHT.DAY_DURATION+D.DAY_NIGHT.DUSK_DURATION){this.overlay.setFillStyle(0x331100);this.overlay.setAlpha((t-D.DAY_NIGHT.DAY_DURATION)/D.DAY_NIGHT.DUSK_DURATION*0.3);}
+        else{const torch=this.player.torchActive||this.campfires.some(cf=>dist(cf,this.player)<150);this.overlay.setFillStyle(0x000033);this.overlay.setAlpha(torch?0.35:0.6);}
     }
 
     updateDayNight(delta){
@@ -467,16 +872,15 @@ class GameScene extends Phaser.Scene {
         this.dayTimer+=delta;
         const cycle=this.dayCycleLength;
         this.currentDay=Math.floor(this.dayTimer/cycle)+1;
-        // Check win condition
         if(this.currentDay>this.maxDays&&!this.gameWon){
             this.gameWon=true;
             this.showFloatingText(this.player.x,this.player.y-50,'🎉 恭喜! 你存活了10天!','#FFD54F');
-            const winBg=this.add.rectangle(this.cameras.main.width/2,this.cameras.main.height/2,400,200,0x000000,0.8).setDepth(200).setScrollFactor(0);
-            const winTxt=this.add.text(this.cameras.main.width/2,this.cameras.main.height/2-20,'🏆 任務完成!\n存活 10 天!',{fontSize:'24px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold',align:'center',stroke:'#000',strokeThickness:3}).setOrigin(0.5).setDepth(201).setScrollFactor(0);
-            const statTxt=this.add.text(this.cameras.main.width/2,this.cameras.main.height/2+40,`擊殺: ${this.kills} 🦖`,{fontSize:'16px',fill:'#81C784',fontFamily:'Arial'}).setOrigin(0.5).setDepth(201).setScrollFactor(0);
+            const cw=this.cameras.main.width,ch=this.cameras.main.height;
+            this.add.rectangle(cw/2,ch/2,400,200,0x000000,0.8).setDepth(200).setScrollFactor(0);
+            this.add.text(cw/2,ch/2-20,'🏆 任務完成!\n存活 10 天!',{fontSize:'24px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold',align:'center',stroke:'#000',strokeThickness:3}).setOrigin(0.5).setDepth(201).setScrollFactor(0);
+            this.add.text(cw/2,ch/2+40,`擊殺: ${this.kills} 🦖`,{fontSize:'16px',fill:'#81C784',fontFamily:'Arial'}).setOrigin(0.5).setDepth(201).setScrollFactor(0);
             return;
         }
-        // New day announcement
         if(this.currentDay>prevDay&&this.currentDay<=this.maxDays){
             this.showFloatingText(this.player.x,this.player.y-50,`☀️ 第 ${this.currentDay} 天開始!`,'#FFD54F');
             if(this.currentDay>=3)this.showFloatingText(this.player.x,this.player.y-35,'恐龍變得更強了...','#FF5252');
@@ -493,13 +897,14 @@ class GameScene extends Phaser.Scene {
         if(this.keys){
             if(this.keys.a.isDown)vx-=1;if(this.keys.d.isDown)vx+=1;if(this.keys.w.isDown)vy-=1;if(this.keys.s.isDown)vy+=1;
             p.sprinting=this.keys.shift.isDown&&p.stamina>0;
-            if(Phaser.Input.Keyboard.JustDown(this.keys.space))this.playerAttack();
+            if(Phaser.Input.Keyboard.JustDown(this.keys.space))this.smartAction();
             if(Phaser.Input.Keyboard.JustDown(this.keys.e))this.gather();
             if(Phaser.Input.Keyboard.JustDown(this.keys.i))this.events.emit('toggleInventory');
             if(Phaser.Input.Keyboard.JustDown(this.keys.c))this.events.emit('toggleCrafting');
             if(Phaser.Input.Keyboard.JustDown(this.keys.f)){if(p.inventory.length>0)this.useItem(0);}
         }
-        if(this.joystick?.active){vx=this.joystick.dx;vy=this.joystick.dy;}
+        // Mobile joystick via UIScene
+        if(this.moveVec.x!==0||this.moveVec.y!==0){vx=this.moveVec.x;vy=this.moveVec.y;}
         const len=Math.hypot(vx,vy);if(len>0){vx/=len;vy/=len;p.facing={x:vx,y:vy};}
         const biome=this.mapData[Math.floor(p.y/TILE)]?.[Math.floor(p.x/TILE)];
         const spd=(p.sprinting?D.PLAYER.SPRINT_SPEED:p.speed)*(biome===D.MAP.BIOMES.SWAMP?0.7:1);
@@ -517,7 +922,7 @@ class GameScene extends Phaser.Scene {
     updateBossWarning(delta){
         this._bossWarnCd=Math.max(0,this._bossWarnCd-delta);if(this._bossWarnCd>0)return;
         const p=this.player,inCamp=this.isInCamp(p.x,p.y);if(inCamp)return;
-        this.dinos.forEach(dino=>{if(!dino.alive||!dino.dinoData.boss)return;const d=dist(dino,p);
+        this.dinos.forEach(dino=>{if(!dino.alive||!dino.dinoData?.boss)return;const d=dist(dino,p);
             if(d<dino.dinoData.detectRange*1.5&&d>dino.dinoData.size+20){
                 if(!dino.bossWarned){AudioMgr.playRoar();this.cameras.main.shake(200,0.008);
                     this.showFloatingText(p.x,p.y-40,`⚠️ ${dino.dinoData.name} 接近中!`,'#FF6D00');
@@ -531,14 +936,20 @@ class GameScene extends Phaser.Scene {
 
     updateDinoAI(delta){
         const p=this.player,isNight=this.dayPhase===D.DAY_NIGHT.PHASES.NIGHT,inCamp=this.isInCamp(p.x,p.y);
+        // Find nearest player for each dino (host + remotes)
+        const allPlayers=[{x:p.x,y:p.y,alive:p.alive}];
+        this.remotePlayers.forEach(rp=>{if(rp.alive)allPlayers.push({x:rp.sprite.x,y:rp.sprite.y,alive:true});});
+
         this.dinos.forEach(dino=>{
             if(!dino.alive)return;
-            // nightOnly dinos: completely hidden during day (no alpha, no collision)
             if(dino.dinoData.nightOnly&&!isNight){dino.setAlpha(0);dino.body.enable=false;if(dino.hpBg)dino.hpBg.setAlpha(0);if(dino.hpBar)dino.hpBar.setAlpha(0);if(dino.nameTxt)dino.nameTxt.setAlpha(0);if(dino.shadow)dino.shadow.setAlpha(0);dino.state='patrol';return;}
             else{dino.setAlpha(1);dino.body.enable=true;if(dino.hpBg)dino.hpBg.setAlpha(1);if(dino.hpBar)dino.hpBar.setAlpha(1);if(dino.nameTxt)dino.nameTxt.setAlpha(1);if(dino.shadow)dino.shadow.setAlpha(0.15);}
 
-            const d=dist(dino,p),data=dino.dinoData;
-            // Night multiplier: +50% at night + day difficulty scaling
+            // Find nearest player
+            let nearP=p,nearD=dist(dino,p);
+            allPlayers.forEach(ap=>{const dd=dist(dino,ap);if(dd<nearD){nearD=dd;nearP=ap;}});
+            const d=nearD,data=dino.dinoData;
+            const nearInCamp=this.isInCamp(nearP.x,nearP.y);
             const nightMult=(isNight&&data.nightBuff)?1.5:1;
             switch(dino.state){
                 case 'patrol':
@@ -546,14 +957,13 @@ class GameScene extends Phaser.Scene {
                         dino.patrolTarget={x:dino.homeX+rnd(-120,120),y:dino.homeY+rnd(-120,120)};
                     this.moveToward(dino,dino.patrolTarget,data.speed*0.4);
                     if(dino.setFlipX)dino.setFlipX(dino.body.velocity.x<0);
-                    // Increased detection at night
                     const detectR=isNight?data.detectRange*1.3:data.detectRange;
-                    if(d<detectR&&!inCamp&&!data.passive)dino.state='chase';
+                    if(d<detectR&&!nearInCamp&&!data.passive)dino.state='chase';
                     break;
                 case 'chase':
-                    if(d>data.aggro||inCamp){dino.state='patrol';break;}
-                    this.moveToward(dino,p,data.speed*nightMult);
-                    if(dino.setFlipX)dino.setFlipX(p.x<dino.x);
+                    if(d>data.aggro||nearInCamp){dino.state='patrol';break;}
+                    this.moveToward(dino,nearP,data.speed*nightMult);
+                    if(dino.setFlipX)dino.setFlipX(nearP.x<dino.x);
                     if(d<data.size+15){dino.state='attack';dino.attackCd=0;}
                     break;
                 case 'attack':
@@ -561,15 +971,18 @@ class GameScene extends Phaser.Scene {
                     dino.body.setVelocity(0,0);
                     dino.attackCd-=delta;
                     if(dino.attackCd<=0){
-                        this.damagePlayer(data.atk*nightMult);
-                        if(data.poison&&!p.poisoned){p.poisoned=true;this.showFloatingText(p.x,p.y-35,'中毒!','#9C27B0');AudioMgr.playPoison();
-                            p.poisonTimer=this.time.addEvent({delay:1000,repeat:5,callback:()=>{if(p.alive&&p.poisoned)this.damagePlayer(2,'毒');}});
-                            this.time.delayedCall(6000,()=>{p.poisoned=false;});}
-                        dino.attackCd=isNight?900:1200; // Faster attack at night
+                        // Damage nearest player (could be remote)
+                        if(nearP===p||nearP===this.player){
+                            this.damagePlayer(data.atk*nightMult);
+                            if(data.poison&&!p.poisoned){p.poisoned=true;this.showFloatingText(p.x,p.y-35,'中毒!','#9C27B0');AudioMgr.playPoison();
+                                p.poisonTimer=this.time.addEvent({delay:1000,repeat:5,callback:()=>{if(p.alive&&p.poisoned)this.damagePlayer(2,'毒');}});
+                                this.time.delayedCall(6000,()=>{p.poisoned=false;});}
+                        }
+                        dino.attackCd=isNight?900:1200;
                         if(dino.setTint){dino.setTint(0xFFAAAA);this.time.delayedCall(200,()=>{if(dino.alive&&dino.clearTint)dino.clearTint();});}
                     }break;
                 case 'flee':
-                    this.moveToward(dino,{x:dino.x+(dino.x-p.x),y:dino.y+(dino.y-p.y)},data.speed*1.3);
+                    this.moveToward(dino,{x:dino.x+(dino.x-nearP.x),y:dino.y+(dino.y-nearP.y)},data.speed*1.3);
                     if(d>data.aggro)dino.state='patrol';break;
             }
             if(dino.alive){
@@ -591,7 +1004,7 @@ class GameScene extends Phaser.Scene {
 }
 
 // ============================================
-// UI Scene
+// UI Scene — 觸控搖桿 + 合併按鈕 + 清晰顯示
 // ============================================
 class UIScene extends Phaser.Scene {
     constructor(){super('UI');}
@@ -602,7 +1015,7 @@ class UIScene extends Phaser.Scene {
         this._mob=this.gs.isMobile;
         const fs=(base)=>this._mob?Math.max(base,Math.floor(base*1.3)):base;
 
-        // HUD bars
+        // ===== HUD bars (top-left) =====
         this.add.rectangle(safeLeft+80,safeTop+30,170,70,0x000000,0.4).setOrigin(0.5).setScrollFactor(0).setDepth(100);
         this.hpBg=this.add.rectangle(safeLeft+80,safeTop+12,140,14,0x333333).setOrigin(0.5).setScrollFactor(0).setDepth(101);
         this.hpFill=this.add.rectangle(safeLeft+11,safeTop+12,138,12,0xF44336).setOrigin(0,0.5).setScrollFactor(0).setDepth(101);
@@ -617,27 +1030,35 @@ class UIScene extends Phaser.Scene {
         this.staminaTxt=this.add.text(safeLeft+80,safeTop+48,'',{fontSize:fs(11)+'px',fill:'#fff',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(102);
         this.add.text(safeLeft,safeTop+48,'⚡',{fontSize:'12px'}).setOrigin(0,0.5).setScrollFactor(0).setDepth(102);
 
-        // Day/Night + countdown timer (CENTER TOP — prominent)
-        this.add.rectangle(w/2,safeTop+22,180,48,0x000000,0.5).setOrigin(0.5).setScrollFactor(0).setDepth(100);
-        this.dayTxt=this.add.text(w/2,safeTop+10,'',{fontSize:fs(13)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(101);
-        this.dayCountTxt=this.add.text(w/2,safeTop+26,'',{fontSize:fs(12)+'px',fill:'#FF9800',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(101);
-        this.biomeTxt=this.add.text(w/2,safeTop+42,'',{fontSize:fs(10)+'px',fill:'#aaa',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+        // ===== Day/Night timer (center-top) =====
+        this.add.rectangle(w/2,safeTop+22,200,50,0x000000,0.55).setOrigin(0.5).setScrollFactor(0).setDepth(100).setStrokeStyle(1,0x333333);
+        this.dayTxt=this.add.text(w/2,safeTop+10,'',{fontSize:fs(14)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+        this.dayCountTxt=this.add.text(w/2,safeTop+28,'',{fontSize:fs(13)+'px',fill:'#FF9800',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+        this.biomeTxt=this.add.text(w/2,safeTop+44,'',{fontSize:fs(10)+'px',fill:'#aaa',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(101);
 
+        // ===== Stats (top-right) =====
         this.statsTxt=this.add.text(w-10,safeTop+8,'',{fontSize:fs(11)+'px',fill:'#81C784',fontFamily:'Arial',align:'right'}).setOrigin(1,0).setScrollFactor(0).setDepth(101);
-        // Sound toggle
         const sndBtn=this.add.text(w-10,safeTop+55,'🔊',{fontSize:'18px'}).setOrigin(1,0).setScrollFactor(0).setDepth(110).setInteractive();
         sndBtn.on('pointerdown',()=>{AudioMgr.toggleMute();sndBtn.setText(AudioMgr.masterGain?.gain.value>0?'🔊':'🔇');});
 
-        if(this.gs.isMobile)this.createMobileButtons(w,h);
+        // ===== Multiplayer indicator =====
+        if(this.gs.isMulti){
+            this.multiTxt=this.add.text(w-10,safeTop+75,'',{fontSize:'10px',fill:'#42A5F5',fontFamily:'Arial',align:'right'}).setOrigin(1,0).setScrollFactor(0).setDepth(101);
+        }
+
+        // ===== Mobile controls =====
+        if(this._mob) this.createMobileControls(w,h);
+
+        // ===== Panels =====
         this.invPanel=this.add.container(w/2,h/2).setDepth(200).setVisible(false).setScrollFactor(0);
         this.craftPanel=this.add.container(w/2,h/2).setDepth(200).setVisible(false).setScrollFactor(0);
 
-        // Quick bar
-        const qS=this._mob?48:42;
-        this.quickBar=this.add.container(w/2,h-50).setDepth(105).setScrollFactor(0);
+        // ===== Quick bar =====
+        const qS=this._mob?50:42;
+        this.quickBar=this.add.container(w/2,h-(this._mob?90:50)).setDepth(105).setScrollFactor(0);
         this.quickSlots=[];
         for(let i=0;i<5;i++){const sx=(i-2)*(qS+4);
-            const bg=this.add.rectangle(sx,0,qS,qS,0x1a1a1a,0.7).setStrokeStyle(1,0x4CAF50);
+            const bg=this.add.rectangle(sx,0,qS,qS,0x1a1a1a,0.75).setStrokeStyle(2,0x4CAF50);
             const txt=this.add.text(sx,0,'',{fontSize:fs(11)+'px',fill:'#fff',fontFamily:'Arial',align:'center',wordWrap:{width:qS-4}}).setOrigin(0.5);
             const qty=this.add.text(sx+qS/2-2,qS/2-2,'',{fontSize:fs(10)+'px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(1,1);
             bg.setInteractive().on('pointerdown',()=>{AudioMgr.playClick();this.gs.useItem(i);});
@@ -647,20 +1068,80 @@ class UIScene extends Phaser.Scene {
         this.gs.events.on('toggleCrafting',()=>this.toggleCrafting());
     }
 
-    createMobileButtons(w,h){
-        const btnSize=56,margin=16,bottomY=h-44,rightX=w-margin;
-        const atkBtn=this.add.circle(rightX-btnSize/2,bottomY-btnSize-10,btnSize/2,0xF44336,0.7).setInteractive().setScrollFactor(0).setDepth(110);
-        this.add.text(rightX-btnSize/2,bottomY-btnSize-10,'⚔️',{fontSize:'22px'}).setOrigin(0.5).setScrollFactor(0).setDepth(111);
-        atkBtn.on('pointerdown',()=>this.gs.playerAttack());
-        const gatherBtn=this.add.circle(rightX-btnSize*1.6,bottomY-btnSize/2,btnSize/2,0x4CAF50,0.7).setInteractive().setScrollFactor(0).setDepth(110);
-        this.add.text(rightX-btnSize*1.6,bottomY-btnSize/2,'🪓',{fontSize:'22px'}).setOrigin(0.5).setScrollFactor(0).setDepth(111);
-        gatherBtn.on('pointerdown',()=>this.gs.gather());
-        const invBtn=this.add.circle(rightX-btnSize/2,bottomY+14,btnSize/3,0x2196F3,0.7).setInteractive().setScrollFactor(0).setDepth(110);
-        this.add.text(rightX-btnSize/2,bottomY+14,'🎒',{fontSize:'16px'}).setOrigin(0.5).setScrollFactor(0).setDepth(111);
+    // ===== Mobile: Virtual Joystick + Action Buttons =====
+    createMobileControls(w,h){
+        this.joyPointerId=-1;
+        this.joyBaseX=0;this.joyBaseY=0;
+
+        // Joystick visual elements
+        this.joyBase=this.add.circle(0,0,58,0xFFFFFF,0.06).setStrokeStyle(3,0xFFFFFF,0.25).setScrollFactor(0).setDepth(120).setVisible(false);
+        this.joyKnob=this.add.circle(0,0,24,0x4CAF50,0.45).setStrokeStyle(2,0xFFFFFF,0.5).setScrollFactor(0).setDepth(121).setVisible(false);
+
+        // Joystick touch zone hint (always visible, subtle)
+        this.add.circle(90,h-160,10,0xFFFFFF,0.08).setScrollFactor(0).setDepth(115);
+        this.add.text(90,h-130,'↕ 移動',{fontSize:'11px',fill:'#ffffff55',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(115);
+
+        // Touch handlers
+        this.input.on('pointerdown',(pointer)=>{
+            if(this.showInv||this.showCraft)return;
+            // Left 45% of screen = joystick zone
+            if(pointer.x<w*0.45&&this.joyPointerId===-1){
+                this.joyPointerId=pointer.id;
+                this.joyBaseX=pointer.x;this.joyBaseY=pointer.y;
+                this.joyBase.setPosition(pointer.x,pointer.y).setVisible(true);
+                this.joyKnob.setPosition(pointer.x,pointer.y).setVisible(true);
+            }
+        });
+        this.input.on('pointermove',(pointer)=>{
+            if(pointer.id===this.joyPointerId&&pointer.isDown){
+                const dx=pointer.x-this.joyBaseX,dy=pointer.y-this.joyBaseY;
+                const d=Math.hypot(dx,dy),maxD=55;
+                const clamped=Math.min(d,maxD);
+                const angle=Math.atan2(dy,dx);
+                this.joyKnob.setPosition(
+                    this.joyBaseX+Math.cos(angle)*clamped,
+                    this.joyBaseY+Math.sin(angle)*clamped
+                );
+                const norm=clamped/maxD;
+                this.gs.moveVec.x=Math.cos(angle)*norm;
+                this.gs.moveVec.y=Math.sin(angle)*norm;
+            }
+        });
+        this.input.on('pointerup',(pointer)=>{
+            if(pointer.id===this.joyPointerId){
+                this.joyPointerId=-1;
+                this.joyBase.setVisible(false);this.joyKnob.setVisible(false);
+                this.gs.moveVec.x=0;this.gs.moveVec.y=0;
+            }
+        });
+
+        // ===== Action Buttons (right side) =====
+        const btnR=w-50,btnBot=h-65;
+        const mainBtnR=38;
+
+        // Main action button — combined attack/gather (auto-detect)
+        const mainBtn=this.add.circle(btnR,btnBot-70,mainBtnR,0xF44336,0.8).setStrokeStyle(3,0xFFFFFF,0.5).setScrollFactor(0).setDepth(115).setInteractive();
+        this.mainBtnIcon=this.add.text(btnR,btnBot-70,'⚔️',{fontSize:'28px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        this.mainBtnLabel=this.add.text(btnR,btnBot-35,'攻擊',{fontSize:'11px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        mainBtn.on('pointerdown',()=>{AudioMgr.resume();this.gs.smartAction();});
+
+        // Inventory button
+        const invBtn=this.add.circle(btnR-65,btnBot+10,26,0x1565C0,0.8).setStrokeStyle(2,0xFFFFFF,0.4).setScrollFactor(0).setDepth(115).setInteractive();
+        this.add.text(btnR-65,btnBot+10,'🎒',{fontSize:'22px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        this.add.text(btnR-65,btnBot+35,'背包',{fontSize:'10px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
         invBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleInventory();});
-        const craftBtn=this.add.circle(rightX-btnSize*1.6,bottomY+14,btnSize/3,0xFF9800,0.7).setInteractive().setScrollFactor(0).setDepth(110);
-        this.add.text(rightX-btnSize*1.6,bottomY+14,'🔨',{fontSize:'16px'}).setOrigin(0.5).setScrollFactor(0).setDepth(111);
+
+        // Craft button
+        const craftBtn=this.add.circle(btnR,btnBot+10,26,0xE65100,0.8).setStrokeStyle(2,0xFFFFFF,0.4).setScrollFactor(0).setDepth(115).setInteractive();
+        this.add.text(btnR,btnBot+10,'🔨',{fontSize:'22px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        this.add.text(btnR,btnBot+35,'合成',{fontSize:'10px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
         craftBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleCrafting();});
+
+        // Gather button (dedicated, left of main)
+        const gatherBtn=this.add.circle(btnR-70,btnBot-55,28,0x2E7D32,0.8).setStrokeStyle(2,0xFFFFFF,0.4).setScrollFactor(0).setDepth(115).setInteractive();
+        this.add.text(btnR-70,btnBot-55,'🪓',{fontSize:'24px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        this.add.text(btnR-70,btnBot-28,'採集',{fontSize:'10px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        gatherBtn.on('pointerdown',()=>{AudioMgr.resume();this.gs.gather();});
     }
 
     toggleInventory(){this.showInv=!this.showInv;this.showCraft=false;this.craftPanel.setVisible(false);if(this.showInv)this.buildInventoryPanel();this.invPanel.setVisible(this.showInv);}
@@ -685,8 +1166,7 @@ class UIScene extends Phaser.Scene {
             const bg=this.add.rectangle(sx,sy,slotSize-4,slotSize-4,0x333333,0.8).setStrokeStyle(1,0x555555).setInteractive();
             this.invPanel.add(bg);
             if(i<inv.length){const item=inv[i],def=D.ITEMS[item.id];
-                // Highlight placeables
-                if(def.type==='placeable'||def.type==='tool')bg.setStrokeStyle(1,0xFF9800);
+                if(def.type==='placeable'||def.type==='tool')bg.setStrokeStyle(2,0xFF9800);
                 this.invPanel.add(this.add.text(sx,sy-8,def.name.substring(0,3),{fontSize:fs(12)+'px',fill:'#fff',fontFamily:'Arial'}).setOrigin(0.5));
                 this.invPanel.add(this.add.text(sx+slotSize/2-6,sy+slotSize/2-6,`${item.qty}`,{fontSize:fs(10)+'px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(1,1));
                 const idx=i;bg.on('pointerdown',()=>{AudioMgr.playClick();this.gs.useItem(idx);this.buildInventoryPanel();});
@@ -732,14 +1212,12 @@ class UIScene extends Phaser.Scene {
         this.hpFill.setFillStyle(p.hp>50?0x4CAF50:p.hp>25?0xFF9800:0xF44336);
         this.hungerFill.setFillStyle(p.hunger>40?0xFF9800:p.hunger>15?0xF44336:0xB71C1C);
 
-        // Day/phase/countdown display
         const gs=this.gs;
         const day=Math.min(gs.currentDay,gs.maxDays);
         const ptl=gs.phaseTimeLeft;
         const secs=Math.ceil(ptl.left/1000);
         const mins=Math.floor(secs/60),sec=secs%60;
         this.dayTxt.setText(`第 ${day}/${gs.maxDays} 天  ${gs.getDayPhaseStr()}`);
-        // Countdown — colored by urgency
         const countdownStr=`${ptl.phase==='night'?'🌙':'⏱'} ${mins}:${sec.toString().padStart(2,'0')}`;
         this.dayCountTxt.setText(countdownStr);
         if(ptl.phase==='night')this.dayCountTxt.setColor('#FF5252');
@@ -749,6 +1227,22 @@ class UIScene extends Phaser.Scene {
         this.biomeTxt.setText(`📍 ${gs.getBiomeName(p.x,p.y)}`);
         const survMins=Math.floor(gs.survivalTime/60000),survSecs=Math.floor((gs.survivalTime%60000)/1000);
         this.statsTxt.setText(`🦖 ${gs.kills} 擊殺\n⏱ ${survMins}:${survSecs.toString().padStart(2,'0')}`);
+
+        // Update action button icon based on proximity
+        if(this._mob&&this.mainBtnIcon){
+            let nearRes=false;
+            gs.resources.forEach(r=>{if(dist(r,p)<50)nearRes=true;});
+            this.mainBtnIcon.setText(nearRes?'🪓':'⚔️');
+            this.mainBtnLabel.setText(nearRes?'採集':'攻擊');
+        }
+
+        // Multiplayer indicator
+        if(this.multiTxt&&gs.isMulti){
+            const count=gs.remotePlayers.size+1;
+            this.multiTxt.setText(`👥 ${count}人連線`);
+        }
+
+        // Quick bar
         for(let i=0;i<5;i++){const slot=this.quickSlots[i];
             if(i<p.inventory.length){const item=p.inventory[i];slot.txt.setText(D.ITEMS[item.id].name.substring(0,3));slot.qty.setText(item.qty>1?item.qty:'');}
             else{slot.txt.setText('');slot.qty.setText('');}}
