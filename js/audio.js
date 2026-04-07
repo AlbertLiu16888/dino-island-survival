@@ -157,6 +157,58 @@ const AudioMgr = {
         });
     },
 
+    // Boss approaching warning — heartbeat tension
+    playBossWarning() {
+        if (!this.enabled) return;
+        this.resume();
+        // Deep heartbeat thump
+        const t = this.ctx.currentTime;
+        for (let i = 0; i < 2; i++) {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = 45;
+            gain.gain.setValueAtTime(0.35, t + i * 0.35);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.35 + 0.25);
+            osc.connect(gain);
+            gain.connect(this.sfxGain);
+            osc.start(t + i * 0.35);
+            osc.stop(t + i * 0.35 + 0.3);
+        }
+        // High tension tone
+        const osc2 = this.ctx.createOscillator();
+        const gain2 = this.ctx.createGain();
+        osc2.type = 'sawtooth';
+        osc2.frequency.setValueAtTime(120, t);
+        osc2.frequency.linearRampToValueAtTime(180, t + 0.8);
+        gain2.gain.setValueAtTime(0.08, t);
+        gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+        osc2.connect(gain2);
+        gain2.connect(this.sfxGain);
+        osc2.start(t);
+        osc2.stop(t + 0.85);
+    },
+
+    // Dino roar (for boss aggro)
+    playRoar() {
+        if (!this.enabled) return;
+        this.resume();
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(80, t);
+        osc.frequency.linearRampToValueAtTime(150, t + 0.15);
+        osc.frequency.exponentialRampToValueAtTime(50, t + 0.6);
+        gain.gain.setValueAtTime(0.3, t);
+        gain.gain.linearRampToValueAtTime(0.35, t + 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+        osc.connect(gain);
+        gain.connect(this.sfxGain);
+        osc.start(t);
+        osc.stop(t + 0.65);
+    },
+
     // Place item (campfire/trap)
     playPlace() {
         if (!this.enabled) return;
