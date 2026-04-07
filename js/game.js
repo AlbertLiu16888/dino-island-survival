@@ -185,6 +185,7 @@ class LobbyScene extends Phaser.Scene {
         this.statusTxt.setText('正在建立房間...').setColor('#FFD54F');
         try{
             NetMgr.playerName=this._playerName;
+            NetMgr.skinIdx=this._skinIdx;
             const code=await NetMgr.createRoom();
             this.codeTxt.setText(`房間代碼: ${code}`);
             this.codeBg.setStrokeStyle(2,0x4CAF50);
@@ -202,6 +203,7 @@ class LobbyScene extends Phaser.Scene {
         this.statusTxt.setText('正在連線...').setColor('#FFD54F');
         try{
             NetMgr.playerName=this._playerName;
+            NetMgr.skinIdx=this._skinIdx;
             await NetMgr.joinRoom(code);
             this.codeTxt.setText(`已加入房間: ${code.toUpperCase()}`);
             this.codeBg.setStrokeStyle(2,0x4CAF50);
@@ -322,12 +324,13 @@ class GameScene extends Phaser.Scene {
         if(this.isHost){
             // Create remote player sprites for each connected client
             NetMgr.connections.forEach((conn,i)=>{
-                this.createRemotePlayer(conn.peer,conn.playerName||`玩家${i+2}`,i+1);
+                this.createRemotePlayer(conn.peer,conn.playerName||`玩家${i+2}`,i+1,conn.metadata?.skinIdx);
             });
             // Handle new connections mid-game
             NetMgr.onPlayerJoin=(id,name)=>{
                 const idx=this.remotePlayers.size+1;
-                this.createRemotePlayer(id,name,idx);
+                const conn=NetMgr.connections.find(c=>c.peer===id);
+                this.createRemotePlayer(id,name,idx,conn?.metadata?.skinIdx);
                 // Send init data to new player
                 this.sendInitToPlayer(id);
             };
@@ -341,33 +344,35 @@ class GameScene extends Phaser.Scene {
                 });
             });
 
-            // Broadcast state at 10fps
-            this.time.addEvent({delay:100,callback:()=>this.broadcastState(),loop:true});
+            // Broadcast state at ~30fps
+            this.time.addEvent({delay:33,callback:()=>this.broadcastState(),loop:true});
         }else{
             // Client mode
             NetMgr.onInitData=(data)=>this.applyInitData(data);
             NetMgr.onStateUpdate=(data)=>this.applyStateUpdate(data);
 
-            // Send input at 20fps
-            this.time.addEvent({delay:50,callback:()=>this.sendInputToHost(),loop:true});
+            // Send input at ~30fps
+            this.time.addEvent({delay:33,callback:()=>this.sendInputToHost(),loop:true});
         }
     }
 
-    createRemotePlayer(peerId,name,index){
+    createRemotePlayer(peerId,name,index,skinIdx){
         const cx=MW/2+rnd(-60,60),cy=MH/2+rnd(-60,60);
         let sprite;
-        if(this.textures.exists('sprite_player')){
-            sprite=this.add.image(cx,cy,'sprite_player').setDepth(10);
+        const si=skinIdx!==undefined?skinIdx:(index%6);
+        const skinKey='sprite_player_'+si;
+        const useKey=this.textures.exists(skinKey)?skinKey:(this.textures.exists('sprite_player')?'sprite_player':null);
+        if(useKey){
+            sprite=this.add.image(cx,cy,useKey).setDepth(10);
             const pScale=(TILE*1.2)/Math.max(sprite.width,sprite.height);
             sprite.setScale(pScale);
         }else{
             sprite=this.add.rectangle(cx,cy,TILE*0.8,TILE*0.8,PLAYER_TINTS[index%6]).setDepth(10);
         }
-        if(sprite.setTint)sprite.setTint(PLAYER_TINTS[index%6]);
         this.physics.add.existing(sprite);sprite.body.setCollideWorldBounds(true);
         const shadow=this.add.ellipse(cx,cy+12,20,8,0x000000,0.2).setDepth(9);
         const nameTxt=this.add.text(cx,cy-24,name,{fontSize:'10px',fill:'#42A5F5',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setDepth(11);
-        const rp={sprite,shadow,nameTxt,peerId,name,index,
+        const rp={sprite,shadow,nameTxt,peerId,name,index,skinIdx:si,
             hp:D.PLAYER.MAX_HP,hunger:D.PLAYER.MAX_HUNGER,stamina:D.PLAYER.MAX_STAMINA,
             atk:D.PLAYER.ATTACK_BASE,def:D.PLAYER.DEFENSE_BASE,
             alive:true,facing:{x:0,y:1},inventory:[],equipped:{weapon:null,armor:null}};
@@ -398,11 +403,11 @@ class GameScene extends Phaser.Scene {
         const players=[{id:'host',x:Math.round(this.player.x),y:Math.round(this.player.y),
             hp:Math.round(this.player.hp),hu:Math.round(this.player.hunger),
             fx:this.player.facing.x,fy:this.player.facing.y,a:this.player.alive?1:0,
-            n:NetMgr.playerName||'房主'}];
+            n:NetMgr.playerName||'房主',si:this.skinIdx||0}];
         this.remotePlayers.forEach((rp,id)=>{
             players.push({id,x:Math.round(rp.sprite.x),y:Math.round(rp.sprite.y),
                 hp:Math.round(rp.hp),hu:Math.round(rp.hunger),
-                fx:rp.facing.x,fy:rp.facing.y,a:rp.alive?1:0,n:rp.name});
+                fx:rp.facing.x,fy:rp.facing.y,a:rp.alive?1:0,n:rp.name,si:rp.skinIdx!==undefined?rp.skinIdx:(rp.index%6)});
         });
         // Build compact dino array
         const dinos=this.dinos.filter(d=>d.alive).map(d=>({
@@ -498,7 +503,7 @@ class GameScene extends Phaser.Scene {
                         // Update/create host player sprite on client
                         if(!this.remotePlayers.has(pd.id)){
                             if(pd.id!==NetMgr.myId){
-                                this.createRemotePlayer(pd.id,pd.n||'房主',0);
+                                this.createRemotePlayer(pd.id,pd.n||'房主',0,pd.si);
                             }
                         }
                         const rp=this.remotePlayers.get(pd.id);
@@ -512,7 +517,7 @@ class GameScene extends Phaser.Scene {
                 }else if(pd.id!==NetMgr.myId){
                     // Other remote player
                     if(!this.remotePlayers.has(pd.id)){
-                        this.createRemotePlayer(pd.id,pd.n||'玩家',this.remotePlayers.size+1);
+                        this.createRemotePlayer(pd.id,pd.n||'玩家',this.remotePlayers.size+1,pd.si);
                     }
                     const rp=this.remotePlayers.get(pd.id);
                     if(rp){
@@ -764,7 +769,7 @@ class GameScene extends Phaser.Scene {
 
     // ===== Crafting =====
     canCraft(recipe){if(!this.hasItems(recipe.mats))return false;if(recipe.needFire){const nf=this.campfires.some(cf=>dist(cf,this.player)<150);if(!nf&&!this.isInCamp(this.player.x,this.player.y))return false;}return true;}
-    craft(recipe){if(!this.canCraft(recipe))return false;for(const[id,qty]of Object.entries(recipe.mats))this.removeItem(id,qty);this.addItem(recipe.result,recipe.qty);this.showFloatingText(this.player.x,this.player.y-20,`合成 ${D.ITEMS[recipe.result].name} x${recipe.qty}`,'#FFC107');AudioMgr.playCraft();return true;}
+    craft(recipe){if(!this.canCraft(recipe))return false;const def=D.ITEMS[recipe.result];const inv=this.player.inventory;const ex=inv.find(s=>s.id===recipe.result&&s.qty<def.stack);if(!ex&&inv.length>=D.PLAYER.INV_SIZE){this.showFloatingText(this.player.x,this.player.y-20,'背包已滿!','#FF5252');return false;}for(const[id,qty]of Object.entries(recipe.mats))this.removeItem(id,qty);this.addItem(recipe.result,recipe.qty);this.showFloatingText(this.player.x,this.player.y-20,`合成 ${D.ITEMS[recipe.result].name} x${recipe.qty}`,'#FFC107');AudioMgr.playCraft();return true;}
 
     // ===== Combat =====
     playerAttack(){

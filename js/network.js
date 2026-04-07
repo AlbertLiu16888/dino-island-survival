@@ -7,6 +7,7 @@ const NetMgr = {
     roomId: null,
     myId: null,
     playerName: '玩家',
+    skinIdx: 0,
     ready: false,
 
     // Callbacks
@@ -67,7 +68,7 @@ const NetMgr = {
             const timeout = setTimeout(() => reject(new Error('連線逾時，請確認代碼')), 12000);
             const conn = this.peer.connect('dino-' + this.roomId, {
                 reliable: true,
-                metadata: { name: this.playerName }
+                metadata: { name: this.playerName, skinIdx: this.skinIdx || 0 }
             });
             conn.on('open', () => {
                 clearTimeout(timeout);
