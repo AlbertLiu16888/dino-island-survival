@@ -107,7 +107,7 @@ class MenuScene extends Phaser.Scene {
             if(this.textures.exists(key))this.add.image(startX+i*(pw+gap),h*0.89,key).setDisplaySize(pw,pw).setAlpha(0.7);
             this.add.text(startX+i*(pw+gap),h*0.89+pw*0.6,biomeLabels[i],{fontSize:'8px',fill:'#777',fontFamily:'Arial'}).setOrigin(0.5);
         });
-        this.add.text(w/2,h*0.97,'v3.5 — 恐龍AI優化 | 互動整合 | 無縫地圖',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.97,'v3.7 — 多人HP同步 | 戰鬥特效共享 | 恐龍攻擊修正',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
     }
 }
 
@@ -293,7 +293,7 @@ class GameScene extends Phaser.Scene {
         this._bossWarnCd=0;this.currentDay=1;this.maxDays=10;this.gameWon=false;
         this.moveVec={x:0,y:0};this._pendingAction=null;
         this._removedResIds=[];this._nextResId=0;this._nextDinoId=0;
-        this._nextPlaceId=0;this._pendingPlaceables=[];this.chests=[];this.cookingPots=[];
+        this._nextPlaceId=0;this._pendingPlaceables=[];this._pendingEffects=[];this.chests=[];this.cookingPots=[];
 
         // Remote players map
         this.remotePlayers=new Map();
@@ -441,6 +441,11 @@ class GameScene extends Phaser.Scene {
         if(pls)state.pls=pls;
         if(chd.length>0)state.chd=chd;
         if(cpd.length>0)state.cpd=cpd;
+        // 戰鬥特效同步
+        if(this._pendingEffects&&this._pendingEffects.length>0){
+            state.fx=this._pendingEffects.slice();
+            this._pendingEffects=[];
+        }
         NetMgr.broadcast(state);
         this._removedResIds=[];this._pendingPlaceables=[];
     }
@@ -474,8 +479,9 @@ class GameScene extends Phaser.Scene {
         AudioMgr.playAttack();
         const range=50,fx=rp.facing;
         const ax=rp.sprite.x+fx.x*20,ay=rp.sprite.y+fx.y*20;
-        const slash=this.add.arc(ax,ay,range/2,0,180,false,0xFFFFFF,0.5).setDepth(20);
-        this.tweens.add({targets:slash,alpha:0,scale:1.5,duration:200,onComplete:()=>slash.destroy()});
+        this._showSlashEffect(ax,ay,fx);
+        // 廣播特效給所有 client
+        this._pendingEffects.push({tp:'slash',x:Math.round(ax),y:Math.round(ay),fx:fx.x,fy:fx.y});
         this.dinos.forEach(dino=>{if(!dino.alive)return;if(dist({x:ax,y:ay},dino)<range){
             const dmg=Math.max(1,rp.atk-(dino.dinoData.def||0)/2);this.damageDino(dino,dmg);
             if(dino.dinoData.passive&&dino.state==='patrol')dino.state='chase';
@@ -551,34 +557,47 @@ class GameScene extends Phaser.Scene {
         if(data.k!==undefined)this.kills=data.k;
         if(data.cd!==undefined)this.currentDay=data.cd;
 
-        // Update/create remote player sprites
+        // Update/create remote player sprites + sync own HP from host
         if(data.p){
             data.p.forEach(pd=>{
-                if(pd.id==='host'||pd.id===NetMgr.myId){
-                    // This is us (client) or the host — for client, update host sprite
-                    if(pd.id!=='host'||!this.isHost){
-                        // Update/create host player sprite on client
-                        if(!this.remotePlayers.has(pd.id)){
-                            if(pd.id!==NetMgr.myId){
-                                this.createRemotePlayer(pd.id,pd.n||'房主',0,pd.si);
-                            }
+                if(pd.id===NetMgr.myId){
+                    // 這是自己的資料 — 從 host 同步 HP/飢餓值
+                    if(pd.hp!==undefined){
+                        const prevHp=this.player.hp;
+                        this.player.hp=pd.hp;
+                        this.player.hunger=pd.hu!==undefined?pd.hu:this.player.hunger;
+                        this.player.alive=pd.a===1;
+                        // 受傷視覺效果
+                        if(pd.hp<prevHp&&pd.hp>0){
+                            if(this.player.setTint)this.player.setTint(0xFF0000);
+                            this.player.invincible=true;
+                            this.time.delayedCall(300,()=>{if(this.player.alive&&this.player.clearTint)this.player.clearTint();this.player.invincible=false;});
+                            this.cameras.main.shake(80,0.004);
+                            this.showFloatingText(this.player.x,this.player.y-25,`-${Math.floor(prevHp-pd.hp)}`,'#FF1744');
+                            AudioMgr.playHit();
                         }
-                        const rp=this.remotePlayers.get(pd.id);
-                        if(rp){
-                            rp.sprite.x=pd.x;rp.sprite.y=pd.y;
-                            rp.shadow.setPosition(pd.x,pd.y+12);
-                            rp.nameTxt.setPosition(pd.x,pd.y-24);
-                            if(rp.sprite.setFlipX)rp.sprite.setFlipX(pd.fx<0);
-                        }
+                        if(pd.hp<=0&&prevHp>0)this.playerDeath();
                     }
-                }else if(pd.id!==NetMgr.myId){
-                    // Other remote player
+                }else if(pd.id==='host'){
+                    // Host 的角色 — 在 client 上顯示
+                    if(!this.remotePlayers.has('host')){
+                        this.createRemotePlayer('host',pd.n||'房主',0,pd.si);
+                    }
+                    const rp=this.remotePlayers.get('host');
+                    if(rp){
+                        rp.sprite.x=pd.x;rp.sprite.y=pd.y;rp.hp=pd.hp;
+                        rp.shadow.setPosition(pd.x,pd.y+12);
+                        rp.nameTxt.setPosition(pd.x,pd.y-24);
+                        if(rp.sprite.setFlipX)rp.sprite.setFlipX(pd.fx<0);
+                    }
+                }else{
+                    // 其他遠端玩家
                     if(!this.remotePlayers.has(pd.id)){
                         this.createRemotePlayer(pd.id,pd.n||'玩家',this.remotePlayers.size+1,pd.si);
                     }
                     const rp=this.remotePlayers.get(pd.id);
                     if(rp){
-                        rp.sprite.x=pd.x;rp.sprite.y=pd.y;
+                        rp.sprite.x=pd.x;rp.sprite.y=pd.y;rp.hp=pd.hp;
                         rp.shadow.setPosition(pd.x,pd.y+12);
                         rp.nameTxt.setPosition(pd.x,pd.y-24);
                         if(rp.sprite.setFlipX)rp.sprite.setFlipX(pd.fx<0);
@@ -671,6 +690,18 @@ class GameScene extends Phaser.Scene {
                     this.cookingPots.push(cp);
                 }
                 cp.slots=cd.sl||[];
+            });
+        }
+        // 播放戰鬥特效 (攻擊斬擊、箭矢)
+        if(data.fx){
+            data.fx.forEach(ef=>{
+                if(ef.tp==='slash'){
+                    this._showSlashEffect(ef.x,ef.y,{x:ef.fx,y:ef.fy});
+                    AudioMgr.playAttack();
+                }else if(ef.tp==='arrow'){
+                    this._spawnArrowVisual(ef.x,ef.y,ef.fx,ef.fy,5);
+                    AudioMgr.playAttack();
+                }
             });
         }
     }
@@ -1025,26 +1056,36 @@ class GameScene extends Phaser.Scene {
         AudioMgr.playAttack();
         const range=50+(wDef?.range||1)*10;
         const fx=this.player.facing,ax=this.player.x+fx.x*20,ay=this.player.y+fx.y*20;
-        const slash=this.add.arc(ax,ay,range/2,0,180,false,0xFFFFFF,0.5).setDepth(20);
-        slash.setAngle(Math.atan2(fx.y,fx.x)*180/Math.PI-90);
-        this.tweens.add({targets:slash,alpha:0,scale:1.5,duration:200,onComplete:()=>slash.destroy()});
+        this._showSlashEffect(ax,ay,fx);
+        // 廣播攻擊特效給所有玩家
+        if(this.isMulti)this._pendingEffects.push({tp:'slash',x:Math.round(ax),y:Math.round(ay),fx:fx.x,fy:fx.y});
         this.dinos.forEach(dino=>{if(!dino.alive)return;if(dist({x:ax,y:ay},dino)<range){
             const dmg=Math.max(1,this.player.atk-dino.dinoData.def/2);this.damageDino(dino,dmg);
             if(dino.dinoData.passive&&dino.state==='patrol')dino.state='chase';
             if(dino.dinoData.reflect)this.damagePlayer(Math.floor(dmg*dino.dinoData.reflect),'反傷');
         }});
     }
+    _showSlashEffect(ax,ay,fx){
+        const slash=this.add.arc(ax,ay,30,0,180,false,0xFFFFFF,0.5).setDepth(20);
+        slash.setAngle(Math.atan2(fx.y,fx.x)*180/Math.PI-90);
+        this.tweens.add({targets:slash,alpha:0,scale:1.5,duration:200,onComplete:()=>slash.destroy()});
+    }
 
     shootArrow(){
         AudioMgr.playAttack();
         const p=this.player,fx=p.facing;
+        this._spawnArrowVisual(p.x,p.y,fx.x,fx.y,this.player.atk);
+        // 廣播箭矢特效
+        if(this.isMulti)this._pendingEffects.push({tp:'arrow',x:Math.round(p.x),y:Math.round(p.y),fx:fx.x,fy:fx.y});
+    }
+    _spawnArrowVisual(px,py,fx,fy,dmg){
         let arrow;
         if(this.textures.exists('sprite_arrow')){
-            arrow=this.add.image(p.x,p.y,'sprite_arrow').setDepth(15);
-            arrow.setAngle(Math.atan2(fx.y,fx.x)*180/Math.PI);arrow.setScale(1.5);
-        }else{arrow=this.add.rectangle(p.x,p.y,12,3,0x8D6E63).setDepth(15);arrow.setAngle(Math.atan2(fx.y,fx.x)*180/Math.PI);}
-        this.physics.add.existing(arrow);arrow.body.setVelocity(fx.x*400,fx.y*400);
-        arrow.dmg=this.player.atk;arrow.life=1500;this.arrows.push(arrow);
+            arrow=this.add.image(px,py,'sprite_arrow').setDepth(15);
+            arrow.setAngle(Math.atan2(fy,fx)*180/Math.PI);arrow.setScale(1.5);
+        }else{arrow=this.add.rectangle(px,py,12,3,0x8D6E63).setDepth(15);arrow.setAngle(Math.atan2(fy,fx)*180/Math.PI);}
+        this.physics.add.existing(arrow);arrow.body.setVelocity(fx*400,fy*400);
+        arrow.dmg=dmg||5;arrow.life=1500;this.arrows.push(arrow);
         this.time.addEvent({delay:50,repeat:8,callback:()=>{if(!arrow.active)return;const t=this.add.circle(arrow.x,arrow.y,1.5,0xFFFFFF,0.4).setDepth(14);this.tweens.add({targets:t,alpha:0,scale:0,duration:200,onComplete:()=>t.destroy()});}});
     }
 
@@ -1085,6 +1126,8 @@ class GameScene extends Phaser.Scene {
         const actual=Math.max(1,dmg-this.player.def/2);this.player.hp-=actual;
         this.showFloatingText(this.player.x,this.player.y-25,`-${Math.floor(actual)}${label?' '+label:''}`,'#FF1744');AudioMgr.playHit();
         if(this.player.setTint)this.player.setTint(0xFF0000);this.player.invincible=true;
+        // 雙重保險：delayedCall + 硬性時間限制防止卡住
+        this._invTimer=this.time.now;
         this.time.delayedCall(400,()=>{if(this.player.alive){if(this.player.clearTint)this.player.clearTint();this.player.invincible=false;}});
         this.cameras.main.shake(100,0.005);if(this.player.hp<=0)this.playerDeath();
     }
@@ -1159,6 +1202,11 @@ class GameScene extends Phaser.Scene {
         if(this.gameWon)return;
         if(!this.player.alive)return;
         this.gameTime+=delta;this.survivalTime+=delta;
+
+        // 安全閥：防止 invincible 卡住超過 600ms
+        if(this.player.invincible&&this._invTimer&&(this.time.now-this._invTimer>600)){
+            this.player.invincible=false;if(this.player.clearTint)this.player.clearTint();
+        }
 
         if(!this.isMulti||this.isHost){
             this.updateDayNight(delta);
