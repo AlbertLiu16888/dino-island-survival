@@ -97,7 +97,7 @@ class MenuScene extends Phaser.Scene {
             this.scene.start('Lobby',{skinIdx:this.selectedSkin,playerName:name});});
 
         const isMobile=this.sys.game.device.input.touch;
-        this.add.text(w/2,h*0.82,isMobile?'觸控搖桿移動 | 點擊按鈕操作':'WASD移動 | Space攻擊 | I背包 | C合成 | R儲藏箱 | T烹飪',{fontSize:Math.min(11,w*0.028)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.82,isMobile?'搖桿移動 | 動作鍵自動攻擊/採集/互動':'WASD移動 | Space動作 | I背包 | C合成 | F使用',{fontSize:Math.min(11,w*0.028)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
 
         // Biome previews (compact row)
         const tileKeys=['tile_camp','tile_grass','tile_forest','tile_swamp','tile_volcano'];
@@ -107,7 +107,7 @@ class MenuScene extends Phaser.Scene {
             if(this.textures.exists(key))this.add.image(startX+i*(pw+gap),h*0.89,key).setDisplaySize(pw,pw).setAlpha(0.7);
             this.add.text(startX+i*(pw+gap),h*0.89+pw*0.6,biomeLabels[i],{fontSize:'8px',fill:'#777',fontFamily:'Arial'}).setOrigin(0.5);
         });
-        this.add.text(w/2,h*0.97,'v3.4 — 無縫地圖 | 烹飪鍋 | 特殊果實 | 多人連線',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.97,'v3.5 — 恐龍AI優化 | 互動整合 | 無縫地圖',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
     }
 }
 
@@ -1046,7 +1046,11 @@ class GameScene extends Phaser.Scene {
     damageDino(dino,dmg){
         dino.hp-=dmg;this.showFloatingText(dino.x,dino.y-20,`-${Math.floor(dmg)}`,'#FF5252');AudioMgr.playHit();
         if(dino.setTint){dino.setTint(0xFF0000);this.time.delayedCall(120,()=>{if(dino.alive&&dino.clearTint)dino.clearTint();});}
-        const dx=dino.x-this.player.x,dy=dino.y-this.player.y,len=Math.hypot(dx,dy)||1;dino.x+=(dx/len)*3;dino.y+=(dy/len)*3;
+        // 攻擊狀態下恐龍不會被擊退 (超級護甲)，其他狀態輕微擊退
+        if(dino.state!=='attack'){
+            const dx=dino.x-this.player.x,dy=dino.y-this.player.y,len=Math.hypot(dx,dy)||1;
+            dino.x+=(dx/len)*2;dino.y+=(dy/len)*2;
+        }
         if(dino.dinoData?.flee)dino.state='flee';else if(dino.state==='patrol')dino.state='chase';
         if(dino.hp<=0)this.killDino(dino);
     }
@@ -1113,10 +1117,15 @@ class GameScene extends Phaser.Scene {
     // Smart action: auto-detect attack or gather
     smartAction(){
         if(!this.player.alive)return;
+        // 優先順序：採集 → 烹飪鍋 → 儲藏箱 → 攻擊
         let nearRes=false,minD=50;
         this.resources.forEach(r=>{if(dist(r,this.player)<minD)nearRes=true;});
-        if(nearRes)this.gather();
-        else this.playerAttack();
+        if(nearRes){this.gather();return;}
+        const cp=this.getNearCookingPot();
+        if(cp){this.events.emit('toggleCookingPot');return;}
+        const ch=this.getNearChest();
+        if(ch){this.events.emit('toggleChest');return;}
+        this.playerAttack();
     }
 
     // ===== Systems =====
@@ -1266,8 +1275,10 @@ class GameScene extends Phaser.Scene {
                     if(d<data.size+15){dino.state='attack';dino.attackCd=0;}
                     break;
                 case 'attack':
-                    if(d>data.size+40){dino.state='chase';break;}
-                    dino.body.setVelocity(0,0);
+                    if(d>data.size+50){dino.state='chase';break;}
+                    // 攻擊中緩慢逼近玩家 (防止被擊退後脫離)
+                    if(d>data.size+5)this.moveToward(dino,nearP,data.speed*0.3*nightMult);
+                    else dino.body.setVelocity(0,0);
                     dino.attackCd-=delta;
                     if(dino.attackCd<=0){
                         // Damage nearest player
@@ -1444,7 +1455,7 @@ class UIScene extends Phaser.Scene {
         // Main action button — combined attack/gather (auto-detect)
         const mainBtn=this.add.circle(btnR,btnBot-70,mainBtnR,0xF44336,0.8).setStrokeStyle(3,0xFFFFFF,0.5).setScrollFactor(0).setDepth(115).setInteractive();
         this.mainBtnIcon=this.add.text(btnR,btnBot-70,'⚔️',{fontSize:'28px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
-        this.mainBtnLabel=this.add.text(btnR,btnBot-35,'攻擊',{fontSize:'11px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        this.mainBtnLabel=this.add.text(btnR,btnBot-35,'動作',{fontSize:'11px',fill:'#fff',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
         mainBtn.on('pointerdown',()=>{AudioMgr.resume();this.gs.smartAction();});
 
         // Inventory button
@@ -1459,37 +1470,30 @@ class UIScene extends Phaser.Scene {
         this.add.text(btnR,btnBot+35,'合成',{fontSize:'10px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
         craftBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleCrafting();});
 
-        // Chest button
-        const chestBtn=this.add.circle(btnR-65,btnBot-60,22,0x6D4C41,0.8).setStrokeStyle(2,0xFFFFFF,0.4).setScrollFactor(0).setDepth(115).setInteractive();
-        this.add.text(btnR-65,btnBot-60,'📦',{fontSize:'18px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
-        this.add.text(btnR-65,btnBot-38,'儲藏',{fontSize:'9px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
-        chestBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleChest();});
-
-        // Cooking pot button
-        const potBtn=this.add.circle(btnR-65,btnBot-110,22,0xE65100,0.8).setStrokeStyle(2,0xFFFFFF,0.4).setScrollFactor(0).setDepth(115).setInteractive();
-        this.add.text(btnR-65,btnBot-110,'🍲',{fontSize:'18px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
-        this.add.text(btnR-65,btnBot-88,'烹飪',{fontSize:'9px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
-        potBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleCookingPot();});
+        // 儲藏箱和烹飪鍋已整合到主按鈕 (smartAction 自動偵測)
 
     }
 
     createKeyboardHints(w,h){
         const hints=[
-            'WASD — 移動',
-            'Shift — 奔跑',
-            'Space — 攻擊/採集',
-            'I — 背包',
-            'C — 合成',
-            'F — 使用物品',
-            'R — 儲藏箱',
-            'T — 烹飪鍋'
+            {key:'WASD', desc:'移動'},
+            {key:'Shift', desc:'奔跑'},
+            {key:'Space', desc:'動作'},
+            {key:'I', desc:'背包'},
+            {key:'C', desc:'合成'},
+            {key:'F', desc:'使用物品'}
         ];
-        const hh=hints.length*20+20;
-        this.add.rectangle(w-10,h/2,155,hh,0x000000,0.5).setOrigin(1,0.5).setScrollFactor(0).setDepth(99);
-        hints.forEach((txt,i)=>{
-            this.add.text(w-88,h/2-(hh/2)+12+i*20,txt,{fontSize:'11px',fill:'#81C784',fontFamily:'Arial',stroke:'#000',strokeThickness:1}).setOrigin(0.5).setScrollFactor(0).setDepth(100);
+        const lineH=22, pad=14;
+        const hh=hints.length*lineH+pad*2+16;
+        const cx=w-85;
+        const bg=this.add.rectangle(w-8,h/2,160,hh,0x000000,0.45).setOrigin(1,0.5).setScrollFactor(0).setDepth(99);
+        bg.setStrokeStyle(1,0x4CAF50,0.2);
+        const startY=h/2-(hh/2)+pad;
+        hints.forEach((h2,i)=>{
+            this.add.text(cx-40,startY+i*lineH,h2.key,{fontSize:'11px',fill:'#FFD54F',fontFamily:'monospace',fontStyle:'bold',stroke:'#000',strokeThickness:1}).setOrigin(1,0).setScrollFactor(0).setDepth(100);
+            this.add.text(cx-32,startY+i*lineH,h2.desc,{fontSize:'11px',fill:'#A8D08D',fontFamily:'Arial',stroke:'#000',strokeThickness:1}).setOrigin(0,0).setScrollFactor(0).setDepth(100);
         });
-        this.add.text(w-88,h/2+hh/2-6,'按鍵提示',{fontSize:'10px',fill:'#555',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(100);
+        this.add.text(cx-10,startY+hints.length*lineH+4,'靠近物件按Space互動',{fontSize:'9px',fill:'#666',fontFamily:'Arial'}).setOrigin(0.5,0).setScrollFactor(0).setDepth(100);
     }
 
     _hideAllPanels(){this.showInv=false;this.showCraft=false;this.showChest=false;this.showPot=false;this.invPanel.setVisible(false);this.craftPanel.setVisible(false);this.chestPanel.setVisible(false);this.potPanel.setVisible(false);}
