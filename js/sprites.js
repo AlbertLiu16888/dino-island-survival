@@ -563,6 +563,32 @@ const SpriteGen = {
     },
 
     // Generate all sprites
+    generateDinoEgg(scene) {
+        const S = 32, c = document.createElement('canvas');
+        c.width = S; c.height = S;
+        const ctx = c.getContext('2d');
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.beginPath(); ctx.ellipse(S/2, S-3, 8, 3, 0, 0, Math.PI*2); ctx.fill();
+        // Egg body (cream oval)
+        ctx.fillStyle = '#F5F0E0';
+        ctx.beginPath(); ctx.ellipse(S/2, S/2, 8, 11, 0, 0, Math.PI*2); ctx.fill();
+        // Darker outline
+        ctx.strokeStyle = '#C8B98A';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.ellipse(S/2, S/2, 8, 11, 0, 0, Math.PI*2); ctx.stroke();
+        // Speckles
+        const speckles = [[S/2-3,S/2-4],[S/2+2,S/2-6],[S/2+4,S/2+1],[S/2-4,S/2+3],[S/2+1,S/2+5],[S/2-2,S/2+7]];
+        speckles.forEach(([sx,sy]) => {
+            ctx.fillStyle = `rgba(139,119,80,${0.3+Math.random()*0.3})`;
+            ctx.beginPath(); ctx.arc(sx, sy, 1+Math.random(), 0, Math.PI*2); ctx.fill();
+        });
+        // Highlight
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.beginPath(); ctx.ellipse(S/2-2, S/2-5, 3, 4, -0.3, 0, Math.PI*2); ctx.fill();
+        scene.textures.addCanvas('sprite_dino_egg', c);
+    },
+
     generateAll(scene) {
         this.generateTree(scene);
         this.generateTree2(scene);
@@ -575,6 +601,7 @@ const SpriteGen = {
         this.generateTrap(scene);
         this.generateTorch(scene);
         this.generateArrow(scene);
+        this.generateDinoEgg(scene);
 
         // Dino sprites
         const dinoConfigs = {

@@ -107,7 +107,7 @@ class MenuScene extends Phaser.Scene {
             if(this.textures.exists(key))this.add.image(startX+i*(pw+gap),h*0.89,key).setDisplaySize(pw,pw).setAlpha(0.7);
             this.add.text(startX+i*(pw+gap),h*0.89+pw*0.6,biomeLabels[i],{fontSize:'8px',fill:'#777',fontFamily:'Arial'}).setOrigin(0.5);
         });
-        this.add.text(w/2,h*0.97,'v3.7 — 多人HP同步 | 戰鬥特效共享 | 恐龍攻擊修正',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.97,'v3.8 — 夜間挑戰系統 | 恐龍蛋收集 | 迅猛龍狩獵',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
     }
 }
 
@@ -294,6 +294,9 @@ class GameScene extends Phaser.Scene {
         this.moveVec={x:0,y:0};this._pendingAction=null;
         this._removedResIds=[];this._nextResId=0;this._nextDinoId=0;
         this._nextPlaceId=0;this._pendingPlaceables=[];this._pendingEffects=[];this.chests=[];this.cookingPots=[];
+        this._nextEggId=0;
+        // 夜間挑戰系統
+        this.nightChallenge={active:false,type:null,scores:{},eggs:[],respawnEvent:null,resultsShown:false,resultData:null};
 
         // Remote players map
         this.remotePlayers=new Map();
@@ -402,10 +405,14 @@ class GameScene extends Phaser.Scene {
         const chData=this.chests.map(c=>({tp:'chest',id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),inv:c.inventory}));
         const cpData=this.cookingPots.map(c=>({tp:'pot',id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),sl:c.slots}));
         // 分批發送避免單包過大
-        try{
-            conn.send({t:'init',map:this.mapData,dt:Math.round(this.dayTimer),cd:this.currentDay,
-                pls:[...cfData,...trData,...chData,...cpData]});
-        }catch(e){}
+        const initMsg={t:'init',map:this.mapData,dt:Math.round(this.dayTimer),cd:this.currentDay,
+                pls:[...cfData,...trData,...chData,...cpData]};
+        // 夜間挑戰狀態
+        if(this.nightChallenge.active){
+            initMsg.nc={tp:this.nightChallenge.type,sc:this.nightChallenge.scores,
+                eggs:this.nightChallenge.eggs.filter(e=>e.active!==false).map(e=>({id:e.eggId,x:Math.round(e.x),y:Math.round(e.y)}))};
+        }
+        try{conn.send(initMsg);}catch(e){}
         // 資源分批 (可能很多)
         const BATCH=100;
         for(let i=0;i<resData.length;i+=BATCH){
@@ -419,11 +426,11 @@ class GameScene extends Phaser.Scene {
         const players=[{id:'host',x:Math.round(this.player.x),y:Math.round(this.player.y),
             hp:Math.round(this.player.hp),hu:Math.round(this.player.hunger),
             fx:this.player.facing.x,fy:this.player.facing.y,a:this.player.alive?1:0,
-            n:NetMgr.playerName||'房主',si:this.skinIdx||0}];
+            n:NetMgr.playerName||'房主',si:this.skinIdx||0,ce:this.player.carryingEgg?1:0}];
         this.remotePlayers.forEach((rp,id)=>{
             players.push({id,x:Math.round(rp.sprite.x),y:Math.round(rp.sprite.y),
                 hp:Math.round(rp.hp),hu:Math.round(rp.hunger),
-                fx:rp.facing.x,fy:rp.facing.y,a:rp.alive?1:0,n:rp.name,si:rp.skinIdx!==undefined?rp.skinIdx:(rp.index%6)});
+                fx:rp.facing.x,fy:rp.facing.y,a:rp.alive?1:0,n:rp.name,si:rp.skinIdx!==undefined?rp.skinIdx:(rp.index%6),ce:rp.carryingEgg?1:0});
         });
         // Build compact dino array
         const dinos=this.dinos.filter(d=>d.alive).map(d=>({
@@ -438,6 +445,15 @@ class GameScene extends Phaser.Scene {
         const cpd=this.cookingPots.map(c=>({id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),sl:c.slots}));
         const state={t:'s',p:players,d:dinos,rm:this._removedResIds,
             dt:Math.round(this.dayTimer),dp:this.dayPhase,k:this.kills,cd:this.currentDay};
+        // 夜間挑戰同步
+        if(this.nightChallenge.active){
+            state.nc={tp:this.nightChallenge.type,sc:this.nightChallenge.scores,
+                eggs:this.nightChallenge.eggs.filter(e=>e.active!==false).map(e=>({id:e.eggId,x:Math.round(e.x),y:Math.round(e.y)}))};
+        }
+        if(this.nightChallenge.resultData&&!this.nightChallenge.resultsShown){
+            state.ncr=this.nightChallenge.resultData;
+            this.nightChallenge.resultsShown=true;
+        }
         if(pls)state.pls=pls;
         if(chd.length>0)state.chd=chd;
         if(cpd.length>0)state.cpd=cpd;
@@ -483,7 +499,7 @@ class GameScene extends Phaser.Scene {
         // 廣播特效給所有 client
         this._pendingEffects.push({tp:'slash',x:Math.round(ax),y:Math.round(ay),fx:fx.x,fy:fx.y});
         this.dinos.forEach(dino=>{if(!dino.alive)return;if(dist({x:ax,y:ay},dino)<range){
-            const dmg=Math.max(1,rp.atk-(dino.dinoData.def||0)/2);this.damageDino(dino,dmg);
+            const dmg=Math.max(1,rp.atk-(dino.dinoData.def||0)/2);this.damageDino(dino,dmg,rp.peerId);
             if(dino.dinoData.passive&&dino.state==='patrol')dino.state='chase';
         }});
     }
@@ -530,6 +546,16 @@ class GameScene extends Phaser.Scene {
         }
         if(data.dt!==undefined)this.dayTimer=data.dt;
         if(data.cd!==undefined)this.currentDay=data.cd;
+        // Init night challenge
+        if(data.nc){
+            this.nightChallenge.active=true;
+            this.nightChallenge.type=data.nc.tp;
+            this.nightChallenge.scores=data.nc.sc||{};
+            if(data.nc.eggs)this._syncChallengeEggs(data.nc.eggs);
+            const challengeName=data.nc.tp==='egg_collect'?'🥚 恐龍蛋收集':'🦖 迅猛龍狩獵';
+            this.showFloatingText(this.player.x,this.player.y-50,`🌙 夜間挑戰進行中: ${challengeName}!`,'#FFD54F');
+            this.events.emit('challengeStart',{type:data.nc.tp,name:challengeName});
+        }
         // Init placeables
         if(data.pls){
             data.pls.forEach(pl=>{
@@ -704,6 +730,35 @@ class GameScene extends Phaser.Scene {
                 }
             });
         }
+        // 夜間挑戰同步 (client)
+        if(data.nc){
+            const wasActive=this.nightChallenge.active;
+            this.nightChallenge.active=true;
+            this.nightChallenge.type=data.nc.tp;
+            this.nightChallenge.scores=data.nc.sc||{};
+            // 同步蛋位置
+            if(data.nc.eggs)this._syncChallengeEggs(data.nc.eggs);
+            // 同步自己的 carryingEgg 狀態
+            if(data.p){
+                const me=data.p.find(pd=>pd.id===NetMgr.myId);
+                if(me)this.player.carryingEgg=me.ce===1;
+            }
+            if(!wasActive){
+                const challengeName=data.nc.tp==='egg_collect'?'🥚 恐龍蛋收集':'🦖 迅猛龍狩獵';
+                this.showFloatingText(this.player.x,this.player.y-50,`🌙 夜間挑戰: ${challengeName}!`,'#FFD54F');
+                this.events.emit('challengeStart',{type:data.nc.tp,name:challengeName});
+            }
+        }else if(this.nightChallenge.active){
+            this.nightChallenge.active=false;
+            this.nightChallenge.eggs.forEach(e=>{if(e.glow)e.glow.destroy();e.destroy();});
+            this.nightChallenge.eggs=[];
+            this.player.carryingEgg=false;
+        }
+        if(data.ncr){
+            this.nightChallenge.resultData=data.ncr;
+            this.events.emit('challengeResults',data.ncr);
+            this.showFloatingText(this.player.x,this.player.y-50,'🏆 夜間挑戰結束!','#FFD54F');
+        }
     }
 
     _createClientDino(dd){
@@ -779,7 +834,7 @@ class GameScene extends Phaser.Scene {
         Object.assign(this.player,{hp:D.PLAYER.MAX_HP,maxHp:D.PLAYER.MAX_HP,hunger:D.PLAYER.MAX_HUNGER,maxHunger:D.PLAYER.MAX_HUNGER,
             stamina:D.PLAYER.MAX_STAMINA,maxStamina:D.PLAYER.MAX_STAMINA,atk:D.PLAYER.ATTACK_BASE,def:D.PLAYER.DEFENSE_BASE,
             speed:D.PLAYER.SPEED,sprinting:false,inventory:[],equipped:{weapon:null,armor:null},
-            facing:{x:0,y:1},alive:true,baseScale:pScale,invincible:false,poisoned:false,poisonTimer:null,lightRadius:0,torchActive:false});
+            facing:{x:0,y:1},alive:true,baseScale:pScale,invincible:false,poisoned:false,poisonTimer:null,lightRadius:0,torchActive:false,carryingEgg:false});
         this._workHunger=0;
         this.addItem('wood',5);this.addItem('stone',3);this.addItem('herb',3);this.addItem('fruit',5);
         // Player name above character
@@ -1060,7 +1115,7 @@ class GameScene extends Phaser.Scene {
         // 廣播攻擊特效給所有玩家
         if(this.isMulti)this._pendingEffects.push({tp:'slash',x:Math.round(ax),y:Math.round(ay),fx:fx.x,fy:fx.y});
         this.dinos.forEach(dino=>{if(!dino.alive)return;if(dist({x:ax,y:ay},dino)<range){
-            const dmg=Math.max(1,this.player.atk-dino.dinoData.def/2);this.damageDino(dino,dmg);
+            const dmg=Math.max(1,this.player.atk-dino.dinoData.def/2);this.damageDino(dino,dmg,'host');
             if(dino.dinoData.passive&&dino.state==='patrol')dino.state='chase';
             if(dino.dinoData.reflect)this.damagePlayer(Math.floor(dmg*dino.dinoData.reflect),'反傷');
         }});
@@ -1096,14 +1151,15 @@ class GameScene extends Phaser.Scene {
             arrow.life-=delta;if(arrow.life<=0){arrow.destroy();this.arrows.splice(i,1);continue;}
             let hit=false;
             this.dinos.forEach(dino=>{if(!dino.alive||hit)return;if(dist(arrow,dino)<(dino.dinoData?.size||20)){
-                const dmg=Math.max(1,arrow.dmg-(dino.dinoData?.def||0)/2);this.damageDino(dino,dmg);
+                const dmg=Math.max(1,arrow.dmg-(dino.dinoData?.def||0)/2);this.damageDino(dino,dmg,'host');
                 if(dino.dinoData?.passive&&dino.state==='patrol')dino.state='chase';hit=true;}});
             if(hit){arrow.destroy();this.arrows.splice(i,1);}
         }
     }
 
-    damageDino(dino,dmg){
-        dino.hp-=dmg;this.showFloatingText(dino.x,dino.y-20,`-${Math.floor(dmg)}`,'#FF5252');AudioMgr.playHit();
+    damageDino(dino,dmg,attackerId){
+        dino.hp-=dmg;if(attackerId)dino.lastAttackerId=attackerId;
+        this.showFloatingText(dino.x,dino.y-20,`-${Math.floor(dmg)}`,'#FF5252');AudioMgr.playHit();
         if(dino.setTint){dino.setTint(0xFF0000);this.time.delayedCall(120,()=>{if(dino.alive&&dino.clearTint)dino.clearTint();});}
         // 攻擊狀態下恐龍不會被擊退 (超級護甲)，其他狀態輕微擊退
         if(dino.state!=='attack'){
@@ -1115,6 +1171,11 @@ class GameScene extends Phaser.Scene {
     }
     killDino(dino){
         dino.alive=false;dino.state='dead';this.kills++;
+        // 夜間挑戰：迅猛龍狩獵計分
+        if(this.nightChallenge.active&&this.nightChallenge.type==='raptor_hunt'&&dino.key==='raptor'){
+            const attacker=dino.lastAttackerId||'host';
+            this.nightChallenge.scores[attacker]=(this.nightChallenge.scores[attacker]||0)+1;
+        }
         if(dino.dinoData?.drops)dino.dinoData.drops.forEach(([id,qty])=>{if(Math.random()<0.8)this.addItem(id,qty);});
         this.showFloatingText(dino.x,dino.y-30,`+${dino.dinoData?.xp||0} XP`,'#FFD54F');AudioMgr.playDinoDeath();
         for(let i=0;i<6;i++){const p=this.add.circle(dino.x+rnd(-10,10),dino.y+rnd(-10,10),3,0xFFFFFF,0.6).setDepth(20);this.tweens.add({targets:p,x:p.x+rnd(-30,30),y:p.y+rnd(-30,30),alpha:0,scale:0,duration:400,onComplete:()=>p.destroy()});}
@@ -1222,6 +1283,7 @@ class GameScene extends Phaser.Scene {
         if(!this.isMulti||this.isHost){
             this.updateSwampDamage(delta);
             this.updateBossWarning(delta);
+            this.updateEggChallenge();
         }
 
         if(this.playerShadow)this.playerShadow.setPosition(this.player.x,this.player.y+12);
@@ -1261,7 +1323,11 @@ class GameScene extends Phaser.Scene {
         if(t<D.DAY_NIGHT.DAY_DURATION){this.dayPhase=D.DAY_NIGHT.PHASES.DAY;this.overlay.setAlpha(0);}
         else if(t<D.DAY_NIGHT.DAY_DURATION+D.DAY_NIGHT.DUSK_DURATION){this.dayPhase=D.DAY_NIGHT.PHASES.DUSK;this.overlay.setFillStyle(0x331100);this.overlay.setAlpha((t-D.DAY_NIGHT.DAY_DURATION)/D.DAY_NIGHT.DUSK_DURATION*0.3);}
         else{this.dayPhase=D.DAY_NIGHT.PHASES.NIGHT;const torch=this.player.torchActive||this.campfires.some(cf=>dist(cf,this.player)<150);this.overlay.setFillStyle(0x000033);this.overlay.setAlpha(torch?0.35:0.6);}
-        if(prev!==this.dayPhase)AudioMgr.updateBGM(this.dayPhase);
+        if(prev!==this.dayPhase){
+            AudioMgr.updateBGM(this.dayPhase);
+            if(this.dayPhase===D.DAY_NIGHT.PHASES.NIGHT)this.startNightChallenge();
+            if(prev===D.DAY_NIGHT.PHASES.NIGHT&&this.dayPhase!==D.DAY_NIGHT.PHASES.NIGHT)this.endNightChallenge();
+        }
     }
 
     updatePlayerMovement(){
@@ -1389,6 +1455,171 @@ class GameScene extends Phaser.Scene {
         });
     }
 
+    // ===== Night Challenge — Client Egg Sync =====
+    _syncChallengeEggs(eggData){
+        const existingIds=new Set(eggData.map(e=>e.id));
+        // 移除不存在的蛋
+        this.nightChallenge.eggs=this.nightChallenge.eggs.filter(e=>{
+            if(!existingIds.has(e.eggId)){if(e.glow)e.glow.destroy();e.destroy();return false;}return true;
+        });
+        // 新增缺少的蛋
+        const localIds=new Set(this.nightChallenge.eggs.map(e=>e.eggId));
+        eggData.forEach(ed=>{
+            if(!localIds.has(ed.id)){
+                let egg;
+                if(this.textures.exists('sprite_dino_egg')){
+                    egg=this.add.image(ed.x,ed.y,'sprite_dino_egg').setDepth(6).setDisplaySize(TILE*0.9,TILE*0.9);
+                }else{
+                    egg=this.add.ellipse(ed.x,ed.y,12,16,0xF5F0E0).setDepth(6);
+                }
+                egg.eggId=ed.id;
+                const glow=this.add.circle(ed.x,ed.y,16,0xFFD54F,0.12).setDepth(5);
+                this.tweens.add({targets:glow,alpha:0.25,yoyo:true,repeat:-1,duration:800});
+                this.tweens.add({targets:egg,y:ed.y-3,yoyo:true,repeat:-1,duration:1200,ease:'Sine.easeInOut'});
+                egg.glow=glow;
+                this.nightChallenge.eggs.push(egg);
+            }
+        });
+    }
+
+    // ===== Night Challenge System =====
+    startNightChallenge(){
+        if(!this.isHost&&this.isMulti)return;
+        const NC=D.NIGHT_CHALLENGE;
+        const type=NC.TYPES[(this.currentDay-1)%NC.TYPES.length];
+        const scores={};
+        scores['host']=0;
+        this.remotePlayers.forEach((rp,id)=>{scores[id]=0;});
+        this.nightChallenge={active:true,type,scores,eggs:[],respawnEvent:null,resultsShown:false,resultData:null};
+        // 挑戰開始公告
+        const challengeName=type==='egg_collect'?'🥚 恐龍蛋收集':'🦖 迅猛龍狩獵';
+        this.showFloatingText(this.player.x,this.player.y-50,`🌙 夜間挑戰: ${challengeName}!`,'#FFD54F');
+        this.events.emit('challengeStart',{type,name:challengeName});
+        if(type==='egg_collect'){
+            this.player.carryingEgg=false;
+            this.remotePlayers.forEach(rp=>{rp.carryingEgg=false;});
+            this.spawnChallengeEggs(NC.EGG_SPAWN_COUNT);
+            this.nightChallenge.respawnEvent=this.time.addEvent({delay:NC.EGG_RESPAWN_INTERVAL,callback:()=>{
+                const alive=this.nightChallenge.eggs.filter(e=>e.active!==false).length;
+                if(alive<NC.EGG_SPAWN_COUNT)this.spawnChallengeEggs(Math.min(NC.EGG_RESPAWN_COUNT,NC.EGG_SPAWN_COUNT-alive));
+            },loop:true});
+        }else if(type==='raptor_hunt'){
+            for(let i=0;i<NC.RAPTOR_BONUS_SPAWN;i++)this.createDino('raptor',D.DINOS.raptor);
+            this.nightChallenge.respawnEvent=this.time.addEvent({delay:NC.RAPTOR_RESPAWN_INTERVAL,callback:()=>{
+                const raptors=this.dinos.filter(d=>d.alive&&d.key==='raptor').length;
+                if(raptors<8)for(let i=0;i<NC.RAPTOR_RESPAWN_COUNT;i++)this.createDino('raptor',D.DINOS.raptor);
+            },loop:true});
+        }
+    }
+
+    endNightChallenge(){
+        if(!this.nightChallenge.active)return;
+        this.nightChallenge.active=false;
+        if(this.nightChallenge.respawnEvent){this.nightChallenge.respawnEvent.remove();this.nightChallenge.respawnEvent=null;}
+        // 清除蛋
+        this.nightChallenge.eggs.forEach(e=>{if(e.glow)e.glow.destroy();e.destroy();});
+        this.nightChallenge.eggs=[];
+        this.player.carryingEgg=false;
+        this.remotePlayers.forEach(rp=>{rp.carryingEgg=false;});
+        // 計算排名
+        const sc=this.nightChallenge.scores;
+        const ranking=Object.entries(sc).sort((a,b)=>b[1]-a[1]);
+        const typeName=this.nightChallenge.type==='egg_collect'?'恐龍蛋收集':'迅猛龍狩獵';
+        // 取得玩家名稱
+        const getName=(id)=>{
+            if(id==='host')return this.myName||'房主';
+            const rp=this.remotePlayers.get(id);
+            return rp?rp.name:'玩家';
+        };
+        const resultData={type:typeName,ranking:ranking.map(([id,score],i)=>({id,name:getName(id),score,rank:i+1}))};
+        this.nightChallenge.resultData=resultData;
+        this.nightChallenge.resultsShown=false;
+        // 發獎勵給第一名 (host端)
+        if(ranking.length>0&&ranking[0][1]>0){
+            const winnerId=ranking[0][0];
+            const rewards=D.NIGHT_CHALLENGE.REWARDS;
+            if(winnerId==='host'){
+                if(rewards[1])this.addItem(rewards[1][0],rewards[1][1]);
+                this.addItem('golden_bone',1);
+            }else{
+                // 遠端玩家獎勵 — 暫存到 rp 上，下次 broadcastState 告知
+                const rp=this.remotePlayers.get(winnerId);
+                if(rp){rp._pendingReward=[['golden_bone',1]];if(rewards[1])rp._pendingReward.push(rewards[1]);}
+            }
+        }
+        this.events.emit('challengeResults',resultData);
+        this.showFloatingText(this.player.x,this.player.y-50,'🏆 夜間挑戰結束!','#FFD54F');
+    }
+
+    spawnChallengeEggs(count){
+        for(let i=0;i<count;i++){
+            let x,y,att=0;
+            do{x=rndInt(5,D.MAP.WIDTH-5);y=rndInt(5,D.MAP.HEIGHT-5);att++;}
+            while((this.mapData[y]?.[x]===0||this.mapData[y]?.[x]===4||!this.mapData[y]?.[x])&&att<30);
+            if(att>=30)continue;
+            const px=x*TILE+TILE/2,py=y*TILE+TILE/2;
+            let egg;
+            if(this.textures.exists('sprite_dino_egg')){
+                egg=this.add.image(px,py,'sprite_dino_egg').setDepth(6).setDisplaySize(TILE*0.9,TILE*0.9);
+            }else{
+                egg=this.add.ellipse(px,py,12,16,0xF5F0E0).setDepth(6);
+            }
+            this.physics.add.existing(egg,true);
+            egg.eggId=this._nextEggId++;
+            // 發光效果，夜間更容易看到
+            const glow=this.add.circle(px,py,16,0xFFD54F,0.12).setDepth(5);
+            this.tweens.add({targets:glow,alpha:0.25,yoyo:true,repeat:-1,duration:800+Math.random()*400});
+            this.tweens.add({targets:egg,y:py-3,yoyo:true,repeat:-1,duration:1200+Math.random()*600,ease:'Sine.easeInOut'});
+            egg.glow=glow;
+            this.nightChallenge.eggs.push(egg);
+        }
+    }
+
+    updateEggChallenge(){
+        if(!this.nightChallenge.active||this.nightChallenge.type!=='egg_collect')return;
+        // 檢查所有玩家 (host + remote) 是否靠近蛋或營地
+        const allP=[{id:'host',x:this.player.x,y:this.player.y,isLocal:true,ref:null,carrying:this.player.carryingEgg}];
+        this.remotePlayers.forEach((rp,id)=>{if(rp.alive)allP.push({id,x:rp.sprite.x,y:rp.sprite.y,isLocal:false,ref:rp,carrying:rp.carryingEgg});});
+
+        allP.forEach(pl=>{
+            if(pl.carrying){
+                // 攜帶蛋 → 檢查是否到達營地
+                if(this.isInCamp(pl.x,pl.y)){
+                    this.nightChallenge.scores[pl.id]=(this.nightChallenge.scores[pl.id]||0)+1;
+                    if(pl.isLocal){
+                        this.player.carryingEgg=false;
+                        this.showFloatingText(pl.x,pl.y-25,`+1 🥚 繳交! (共${this.nightChallenge.scores[pl.id]})`,'#FFD54F');
+                        AudioMgr.playEquip();
+                    }else{
+                        pl.ref.carryingEgg=false;
+                        this.showFloatingText(pl.x,pl.y-25,`+1 🥚 繳交!`,'#FFD54F');
+                    }
+                }
+            }else{
+                // 未攜帶 → 檢查是否靠近蛋
+                for(let i=this.nightChallenge.eggs.length-1;i>=0;i--){
+                    const egg=this.nightChallenge.eggs[i];
+                    if(egg.active===false)continue;
+                    if(dist({x:pl.x,y:pl.y},egg)<40){
+                        // 拾取蛋
+                        if(pl.isLocal){
+                            this.player.carryingEgg=true;
+                            this.showFloatingText(pl.x,pl.y-25,'拾取恐龍蛋! 帶回營地繳交','#FFD54F');
+                            AudioMgr.playGather();
+                        }else{
+                            pl.ref.carryingEgg=true;
+                            this.showFloatingText(pl.x,pl.y-25,'拾取恐龍蛋!','#FFD54F');
+                        }
+                        if(egg.glow)egg.glow.destroy();
+                        egg.destroy();
+                        this.nightChallenge.eggs.splice(i,1);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     moveToward(obj,target,speed){const dx=target.x-obj.x,dy=target.y-obj.y,len=Math.hypot(dx,dy);if(len>2)obj.body.setVelocity((dx/len)*speed,(dy/len)*speed);else obj.body.setVelocity(0,0);}
 }
 
@@ -1465,6 +1696,18 @@ class UIScene extends Phaser.Scene {
         this.gs.events.on('toggleCrafting',()=>this.toggleCrafting());
         this.gs.events.on('toggleChest',()=>this.toggleChest());
         this.gs.events.on('toggleCookingPot',()=>this.toggleCookingPot());
+
+        // ===== 夜間挑戰 UI =====
+        // 即時計分板
+        this.challengeBoard=this.add.container(w-10,safeTop+95).setDepth(110).setScrollFactor(0).setVisible(false);
+        // 蛋攜帶指示
+        this.eggIndicator=this.add.text(w/2,safeTop+58,'',{fontSize:fs(12)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(102).setVisible(false);
+        // 挑戰開始橫幅
+        this.challengeBanner=this.add.container(w/2,h*0.3).setDepth(300).setScrollFactor(0).setVisible(false);
+        // 結果面板
+        this.challengeResultPanel=this.add.container(w/2,h/2).setDepth(250).setScrollFactor(0).setVisible(false);
+        this.gs.events.on('challengeStart',(data)=>this.showChallengeBanner(data));
+        this.gs.events.on('challengeResults',(data)=>this.showChallengeResults(data));
     }
 
     // ===== Mobile: Virtual Joystick + Action Buttons =====
@@ -1687,6 +1930,84 @@ class UIScene extends Phaser.Scene {
         });
     }
 
+    // ===== 夜間挑戰 UI =====
+    showChallengeBanner(data){
+        this.challengeBanner.removeAll(true);
+        const w=this.cameras.main.width;
+        const bg=this.add.rectangle(0,0,w*0.85,70,0x000000,0.85).setStrokeStyle(2,0xFFD54F);
+        const title=this.add.text(0,-14,'🌙 夜間挑戰開始!',{fontSize:'18px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold',stroke:'#000',strokeThickness:3}).setOrigin(0.5);
+        const sub=this.add.text(0,14,data.name+(data.type==='egg_collect'?' — 收集恐龍蛋帶回營地!':' — 獵殺最多迅猛龍!'),{fontSize:'13px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5);
+        this.challengeBanner.add([bg,title,sub]);
+        this.challengeBanner.setVisible(true).setAlpha(0);
+        this.tweens.add({targets:this.challengeBanner,alpha:1,y:this.cameras.main.height*0.25,duration:500,ease:'Back.easeOut'});
+        this.time.delayedCall(4000,()=>{
+            this.tweens.add({targets:this.challengeBanner,alpha:0,duration:600,onComplete:()=>this.challengeBanner.setVisible(false)});
+        });
+    }
+
+    showChallengeResults(data){
+        this.challengeResultPanel.removeAll(true);
+        const w=this.cameras.main.width,h=this.cameras.main.height;
+        const pw=Math.min(300,w*0.8),ph=Math.min(320,h*0.55);
+        const fs=(base)=>this._mob?Math.max(base,Math.floor(base*1.3)):base;
+        const bg=this.add.rectangle(0,0,pw,ph,0x1a1a1a,0.95).setStrokeStyle(2,0xFFD54F);
+        this.challengeResultPanel.add(bg);
+        this.challengeResultPanel.add(this.add.text(0,-ph/2+20,'🏆 夜間挑戰結果',{fontSize:fs(18)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5));
+        this.challengeResultPanel.add(this.add.text(0,-ph/2+44,data.type,{fontSize:fs(13)+'px',fill:'#aaa',fontFamily:'Arial'}).setOrigin(0.5));
+        const medals=['🥇','🥈','🥉'];
+        const ranking=data.ranking||[];
+        ranking.forEach((r,i)=>{
+            const ry=-ph/2+70+i*36;
+            if(ry>ph/2-20)return;
+            const medal=i<3?medals[i]:`${i+1}.`;
+            const color=i===0?'#FFD54F':i===1?'#C0C0C0':i===2?'#CD7F32':'#aaa';
+            this.challengeResultPanel.add(this.add.text(-pw/2+20,ry,`${medal} ${r.name}`,{fontSize:fs(14)+'px',fill:color,fontFamily:'Arial',fontStyle:i===0?'bold':''}).setOrigin(0,0.5));
+            this.challengeResultPanel.add(this.add.text(pw/2-20,ry,`${r.score} 分`,{fontSize:fs(14)+'px',fill:color,fontFamily:'Arial',fontStyle:'bold'}).setOrigin(1,0.5));
+        });
+        if(ranking.length>0&&ranking[0].score>0){
+            const rewardY=-ph/2+70+ranking.length*36+10;
+            this.challengeResultPanel.add(this.add.text(0,Math.min(rewardY,ph/2-30),`🎁 冠軍獲得: 金骨頭 + 治療藥水x3`,{fontSize:fs(11)+'px',fill:'#81C784',fontFamily:'Arial'}).setOrigin(0.5));
+        }
+        // 關閉按鈕
+        const closeBtn=this.add.text(pw/2-15,-ph/2+12,'✕',{fontSize:fs(18)+'px',fill:'#FF5252',fontFamily:'Arial'}).setOrigin(0.5).setInteractive();
+        closeBtn.on('pointerdown',()=>{this.challengeResultPanel.setVisible(false);});
+        this.challengeResultPanel.add(closeBtn);
+        this.challengeResultPanel.setVisible(true).setAlpha(0);
+        this.tweens.add({targets:this.challengeResultPanel,alpha:1,duration:500});
+        // 8秒後自動關閉
+        this.time.delayedCall(8000,()=>{
+            if(this.challengeResultPanel.visible)this.tweens.add({targets:this.challengeResultPanel,alpha:0,duration:600,onComplete:()=>this.challengeResultPanel.setVisible(false)});
+        });
+    }
+
+    updateChallengeBoard(){
+        this.challengeBoard.removeAll(true);
+        const gs=this.gs,nc=gs.nightChallenge;
+        if(!nc||!nc.active)return;
+        const fs=(base)=>this._mob?Math.max(base,Math.floor(base*1.3)):base;
+        const typeName=nc.type==='egg_collect'?'🥚 蛋收集':'🦖 狩獵';
+        // 排序分數
+        const entries=Object.entries(nc.scores||{}).sort((a,b)=>b[1]-a[1]);
+        const getName=(id)=>{
+            if(id==='host')return gs.isHost?(gs.myName||'我'):('房主');
+            if(id===NetMgr.myId)return gs.myName||'我';
+            const rp=gs.remotePlayers.get(id);
+            return rp?rp.name:'玩家';
+        };
+        const pw=130,lineH=18;
+        const ph=24+entries.length*lineH+4;
+        const bg=this.add.rectangle(-pw/2,ph/2-12,pw,ph,0x000000,0.6).setStrokeStyle(1,0xFFD54F);
+        this.challengeBoard.add(bg);
+        this.challengeBoard.add(this.add.text(-pw+5,-10,typeName,{fontSize:fs(11)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0,0));
+        entries.forEach(([id,score],i)=>{
+            const y=8+i*lineH;
+            const isMe=(id==='host'&&gs.isHost)||(id===NetMgr.myId);
+            const color=isMe?'#A8D08D':'#ccc';
+            this.challengeBoard.add(this.add.text(-pw+5,y,getName(id),{fontSize:fs(10)+'px',fill:color,fontFamily:'Arial'}).setOrigin(0,0));
+            this.challengeBoard.add(this.add.text(-5,y,`${score}`,{fontSize:fs(10)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(1,0));
+        });
+    }
+
     buildInventoryPanel(){
         this.invPanel.removeAll(true);
         const w=this.cameras.main.width,h=this.cameras.main.height;
@@ -1784,6 +2105,23 @@ class UIScene extends Phaser.Scene {
         if(this.multiTxt&&gs.isMulti){
             const count=gs.remotePlayers.size+1;
             this.multiTxt.setText(`👥 ${count}人連線`);
+        }
+
+        // 夜間挑戰 UI 更新
+        if(gs.nightChallenge?.active){
+            this.challengeBoard.setVisible(true);
+            this.updateChallengeBoard();
+            // 蛋攜帶指示
+            if(gs.nightChallenge.type==='egg_collect'&&gs.player.carryingEgg){
+                this.eggIndicator.setText('🥚 攜帶恐龍蛋 → 回營地繳交!').setVisible(true);
+            }else if(gs.nightChallenge.type==='egg_collect'){
+                this.eggIndicator.setText('🥚 尋找恐龍蛋!').setVisible(true);
+            }else{
+                this.eggIndicator.setVisible(false);
+            }
+        }else{
+            this.challengeBoard.setVisible(false);
+            this.eggIndicator.setVisible(false);
         }
 
         // Quick bar

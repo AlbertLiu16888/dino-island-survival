@@ -93,7 +93,10 @@ const GAME_DATA = {
         campfire: { name: '營火', type: 'placeable', stack: 99, desc: '安全據點，可合成/烹飪', light: 300 },
         trap:     { name: '石陷阱', type: 'placeable', stack: 99, desc: '傷害15，減速50%', dmg: 15 },
         chest:    { name: '儲藏箱', type: 'placeable', stack: 99, desc: '共享20格儲物空間', slots: 20 },
-        cooking_pot: { name: '烹飪鍋', type: 'placeable', stack: 99, desc: '投入食材烹飪料理', slots: 3 }
+        cooking_pot: { name: '烹飪鍋', type: 'placeable', stack: 99, desc: '投入食材烹飪料理', slots: 3 },
+        // 夜間挑戰獎勵
+        dino_egg:     { name: '恐龍蛋', type: 'challenge', stack: 1, desc: '夜間挑戰收集品' },
+        golden_bone:  { name: '金骨頭', type: 'resource', stack: 99, desc: '夜間挑戰冠軍獎勵，可合成稀有裝備' }
     },
 
     // 基礎合成配方 (合成台)
@@ -136,6 +139,22 @@ const GAME_DATA = {
         { id: 'stew2', result: 'stew', qty: 2, name: '大鍋燉湯',
           slots: ['meat','herb','fruit'], desc: '燉湯x2' }
     ],
+
+    // 夜間挑戰系統
+    NIGHT_CHALLENGE: {
+        TYPES: ['egg_collect', 'raptor_hunt'],
+        EGG_SPAWN_COUNT: 15,
+        EGG_RESPAWN_INTERVAL: 12000,
+        EGG_RESPAWN_COUNT: 4,
+        RAPTOR_BONUS_SPAWN: 10,
+        RAPTOR_RESPAWN_INTERVAL: 10000,
+        RAPTOR_RESPAWN_COUNT: 4,
+        REWARDS: {
+            1: ['heal_pot', 3],       // 第1名
+            2: ['cooked_meat', 3],    // 第2名
+            3: ['fruit', 5],          // 第3名
+        }
+    },
 
     // 恐龍定義
     DINOS: {
