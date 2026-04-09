@@ -9,7 +9,8 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const rnd = (a, b) => Math.random() * (b - a) + a;
 const rndInt = (a, b) => Math.floor(rnd(a, b + 1));
 const pick = arr => arr[rndInt(0, arr.length - 1)];
-const RES_SPRITES = { wood:'sprite_wood', stone:'sprite_stone', herb:'sprite_herb', iron:'sprite_iron', fruit:'sprite_fruit' };
+const RES_SPRITES = { wood:'sprite_wood', stone:'sprite_stone', herb:'sprite_herb', iron:'sprite_iron', fruit:'sprite_fruit', speed_fruit:'sprite_fruit', power_fruit:'sprite_fruit', hard_fruit:'sprite_fruit' };
+const FRUIT_COLORS = { speed_fruit: 0x42A5F5, power_fruit: 0xFF5252, hard_fruit: 0x8D6E63 };
 const DINO_SPRITE_KEYS = {
     raptor:'sprite_dino_raptor', oviraptor:'sprite_dino_oviraptor', trike:'sprite_dino_trike',
     stego:'sprite_dino_stego', dilopho:'sprite_dino_dilopho', allo:'sprite_dino_allo',
@@ -96,7 +97,7 @@ class MenuScene extends Phaser.Scene {
             this.scene.start('Lobby',{skinIdx:this.selectedSkin,playerName:name});});
 
         const isMobile=this.sys.game.device.input.touch;
-        this.add.text(w/2,h*0.82,isMobile?'觸控搖桿移動 | 點擊按鈕操作':'WASD移動 | Space攻擊/採集 | I背包 | C合成 | R儲藏箱',{fontSize:Math.min(11,w*0.028)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.82,isMobile?'觸控搖桿移動 | 點擊按鈕操作':'WASD移動 | Space攻擊 | I背包 | C合成 | R儲藏箱 | T烹飪',{fontSize:Math.min(11,w*0.028)+'px',fill:'#81C784',fontFamily:'Arial',wordWrap:{width:w*0.85},align:'center'}).setOrigin(0.5);
 
         // Biome previews (compact row)
         const tileKeys=['tile_camp','tile_grass','tile_forest','tile_swamp','tile_volcano'];
@@ -106,7 +107,7 @@ class MenuScene extends Phaser.Scene {
             if(this.textures.exists(key))this.add.image(startX+i*(pw+gap),h*0.89,key).setDisplaySize(pw,pw).setAlpha(0.7);
             this.add.text(startX+i*(pw+gap),h*0.89+pw*0.6,biomeLabels[i],{fontSize:'8px',fill:'#777',fontFamily:'Arial'}).setOrigin(0.5);
         });
-        this.add.text(w/2,h*0.97,'v3.2 — 10天生存 | 儲藏箱 | 真實多人連線',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.97,'v3.3 — 烹飪鍋 | 特殊果實 | 增益效果 | 多人連線',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
     }
 }
 
@@ -292,7 +293,7 @@ class GameScene extends Phaser.Scene {
         this._bossWarnCd=0;this.currentDay=1;this.maxDays=10;this.gameWon=false;
         this.moveVec={x:0,y:0};this._pendingAction=null;
         this._removedResIds=[];this._nextResId=0;this._nextDinoId=0;
-        this._nextPlaceId=0;this._pendingPlaceables=[];this.chests=[];this.chestData=[];
+        this._nextPlaceId=0;this._pendingPlaceables=[];this.chests=[];this.cookingPots=[];
 
         // Remote players map
         this.remotePlayers=new Map();
@@ -396,9 +397,10 @@ class GameScene extends Phaser.Scene {
         const cfData=this.campfires.map(cf=>({tp:'campfire',x:Math.round(cf.x),y:Math.round(cf.y)}));
         const trData=this.traps.filter(t=>t.active).map(t=>({tp:'trap',x:Math.round(t.x),y:Math.round(t.y)}));
         const chData=this.chests.map(c=>({tp:'chest',id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),inv:c.inventory}));
+        const cpData=this.cookingPots.map(c=>({tp:'pot',id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),sl:c.slots}));
         try{
             conn.send({t:'init',map:this.mapData,res:resData,dt:Math.round(this.dayTimer),cd:this.currentDay,
-                pls:[...cfData,...trData,...chData]});
+                pls:[...cfData,...trData,...chData,...cpData]});
         }catch(e){}
     }
 
@@ -422,12 +424,14 @@ class GameScene extends Phaser.Scene {
 
         // Build placeables for sync
         const pls=this._pendingPlaceables.length>0?this._pendingPlaceables.slice():undefined;
-        // Build chest inventories
+        // Build chest inventories and cooking pot states
         const chd=this.chests.map(c=>({id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),inv:c.inventory}));
+        const cpd=this.cookingPots.map(c=>({id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),sl:c.slots}));
         const state={t:'s',p:players,d:dinos,rm:this._removedResIds,
             dt:Math.round(this.dayTimer),dp:this.dayPhase,k:this.kills,cd:this.currentDay};
         if(pls)state.pls=pls;
         if(chd.length>0)state.chd=chd;
+        if(cpd.length>0)state.cpd=cpd;
         NetMgr.broadcast(state);
         this._removedResIds=[];this._pendingPlaceables=[];
     }
@@ -451,6 +455,9 @@ class GameScene extends Phaser.Scene {
         else if(data.act==='chest_sync'&&data.cid!==undefined){
             const ch=this.chests.find(c=>c.placeId===data.cid);
             if(ch)ch.inventory=data.inv||[];
+        }else if(data.act==='pot_sync'&&data.pid!==undefined){
+            const cp=this.cookingPots.find(c=>c.placeId===data.pid);
+            if(cp)cp.slots=data.slots||[];
         }
     }
 
@@ -509,6 +516,10 @@ class GameScene extends Phaser.Scene {
                     const chest=this._createChestVisual(pl.x,pl.y);
                     chest.placeId=pl.id;
                     this.chests.push({sprite:chest,x:pl.x,y:pl.y,placeId:pl.id,inventory:pl.inv||[]});
+                }else if(pl.tp==='pot'){
+                    const pot=this._createCookingPotVisual(pl.x,pl.y);
+                    pot.placeId=pl.id;
+                    this.cookingPots.push({sprite:pot,x:pl.x,y:pl.y,placeId:pl.id,slots:pl.sl||[]});
                 }
             });
         }
@@ -603,11 +614,16 @@ class GameScene extends Phaser.Scene {
                 else if(pl.tp==='campfire'){const cf=this._createCampfireVisual(pl.x,pl.y,{light:300});this.campfires.push(cf);}
                 else if(pl.tp==='trap')this._createTrapVisual(pl.x,pl.y,{dmg:15});
                 else if(pl.tp==='chest'){
-                    // Check if chest already exists
                     if(!this.chests.find(c=>c.placeId===pl.id)){
                         const chest=this._createChestVisual(pl.x,pl.y);
                         chest.placeId=pl.id;
                         this.chests.push({sprite:chest,x:pl.x,y:pl.y,placeId:pl.id,inventory:[]});
+                    }
+                }else if(pl.tp==='pot'){
+                    if(!this.cookingPots.find(c=>c.placeId===pl.id)){
+                        const pot=this._createCookingPotVisual(pl.x,pl.y);
+                        pot.placeId=pl.id;
+                        this.cookingPots.push({sprite:pot,x:pl.x,y:pl.y,placeId:pl.id,slots:[]});
                     }
                 }
             });
@@ -624,6 +640,19 @@ class GameScene extends Phaser.Scene {
                     this.chests.push(ch);
                 }
                 ch.inventory=cd.inv||[];
+            });
+        }
+        // Sync cooking pots from host
+        if(data.cpd){
+            data.cpd.forEach(cd=>{
+                let cp=this.cookingPots.find(c=>c.placeId===cd.id);
+                if(!cp){
+                    const pot=this._createCookingPotVisual(cd.x,cd.y);
+                    pot.placeId=cd.id;
+                    cp={sprite:pot,x:cd.x,y:cd.y,placeId:cd.id,slots:[]};
+                    this.cookingPots.push(cp);
+                }
+                cp.slots=cd.sl||[];
             });
         }
     }
@@ -714,8 +743,9 @@ class GameScene extends Phaser.Scene {
     spawnResources(){for(let y=0;y<D.MAP.HEIGHT;y++)for(let x=0;x<D.MAP.WIDTH;x++){const b=this.mapData[y][x];if(b===0)continue;for(const[key,res]of Object.entries(D.RESOURCES))if(res.biomes.includes(b)&&Math.random()<res.rate)this.createResource(key,x*TILE+TILE/2,y*TILE+TILE/2);}}
     createResource(type,x,y,id){
         let sk=RES_SPRITES[type];if(type==='wood'&&Math.random()<0.4&&this.textures.exists('sprite_wood2'))sk='sprite_wood2';
-        let r;if(sk&&this.textures.exists(sk)){r=this.add.image(x,y,sk).setDepth(3);r.setScale((type==='wood'?TILE*1.4:TILE*1.0)/Math.max(r.width,r.height));}
-        else{const c={wood:0x8D6E63,stone:0x9E9E9E,herb:0x4CAF50,iron:0xB0BEC5,fruit:0xE91E63};r=this.add.circle(x,y,7,c[type]||0xFFFFFF).setDepth(3);}
+        let r;if(sk&&this.textures.exists(sk)){r=this.add.image(x,y,sk).setDepth(3);r.setScale((type==='wood'?TILE*1.4:TILE*1.0)/Math.max(r.width,r.height));
+            if(FRUIT_COLORS[type]&&r.setTint)r.setTint(FRUIT_COLORS[type]);}
+        else{const c={wood:0x8D6E63,stone:0x9E9E9E,herb:0x4CAF50,iron:0xB0BEC5,fruit:0xE91E63,speed_fruit:0x42A5F5,power_fruit:0xFF5252,hard_fruit:0x8D6E63};r=this.add.circle(x,y,7,c[type]||0xFFFFFF).setDepth(3);}
         this.physics.add.existing(r,true);r.type=type;r.resId=id!==undefined?id:this._nextResId++;
         this.tweens.add({targets:r,y:y-2,yoyo:true,repeat:-1,duration:1500+Math.random()*1000,ease:'Sine.easeInOut'});
         this.resources.push(r);return r;
@@ -766,7 +796,7 @@ class GameScene extends Phaser.Scene {
 
     // ===== Input =====
     setupInput(){
-        this.keys=this.input.keyboard?.addKeys({w:'W',a:'A',s:'S',d:'D',space:'SPACE',e:'E',i:'I',c:'C',f:'F',r:'R',shift:'SHIFT',esc:'ESC'});
+        this.keys=this.input.keyboard?.addKeys({w:'W',a:'A',s:'S',d:'D',space:'SPACE',e:'E',i:'I',c:'C',f:'F',r:'R',t:'T',shift:'SHIFT',esc:'ESC'});
     }
 
     // ===== Inventory =====
@@ -783,7 +813,8 @@ class GameScene extends Phaser.Scene {
             if(def.hunger)this.player.hunger=Math.min(this.player.maxHunger,this.player.hunger+def.hunger);
             if(def.hp)this.player.hp=Math.min(this.player.maxHp,this.player.hp+def.hp);
             if(def.cleanse&&this.player.poisoned){this.player.poisoned=false;if(this.player.poisonTimer)this.player.poisonTimer.remove();}
-            this.showFloatingText(this.player.x,this.player.y-20,def.hunger?`+${def.hunger} 飽食`:`+${def.hp} HP`,'#4CAF50');
+            if(def.buff)this.applyBuff(def);
+            this.showFloatingText(this.player.x,this.player.y-20,def.hunger?`+${def.hunger} 飽食`:(def.hp?`+${def.hp} HP`:def.name),'#4CAF50');
             AudioMgr.playEat();item.qty--;if(item.qty<=0)this.player.inventory.splice(slot,1);
         }else if(def.type==='weapon'){
             this.player.equipped.weapon=item.id;this.player.atk=D.PLAYER.ATTACK_BASE+(def.atk||0);
@@ -832,6 +863,15 @@ class GameScene extends Phaser.Scene {
             item.qty--;if(item.qty<=0)this.player.inventory.splice(slot,1);
             if(this.isMulti)this._pendingPlaceables.push({id:chid,tp:'chest',x:Math.round(px),y:Math.round(py)});
             this.showFloatingText(px,py-20,'放置儲藏箱📦','#8D6E63');AudioMgr.playPlace();
+        }else if(item.id==='cooking_pot'){
+            const cpid=this._nextPlaceId++;
+            const pot=this._createCookingPotVisual(px,py);
+            pot.placeId=cpid;
+            const potObj={sprite:pot,x:px,y:py,placeId:cpid,slots:[]};
+            this.cookingPots.push(potObj);
+            item.qty--;if(item.qty<=0)this.player.inventory.splice(slot,1);
+            if(this.isMulti)this._pendingPlaceables.push({id:cpid,tp:'pot',x:Math.round(px),y:Math.round(py)});
+            this.showFloatingText(px,py-20,'放置烹飪鍋🍲','#FF6D00');AudioMgr.playPlace();
         }
     }
     _createTorchVisual(px,py,def){
@@ -856,6 +896,18 @@ class GameScene extends Phaser.Scene {
         this.physics.add.existing(trap,true);trap.dmg=def?.dmg||15;trap.active=true;
         return trap;
     }
+    _createCookingPotVisual(px,py){
+        let pot;
+        pot=this.add.rectangle(px,py,TILE*0.8,TILE*0.6,0x555555).setDepth(4).setStrokeStyle(2,0xFF6D00);
+        this.physics.add.existing(pot,true);
+        const label=this.add.text(px,py-TILE*0.5,'🍲',{fontSize:'14px'}).setOrigin(0.5).setDepth(5);
+        pot.label=label;
+        // Cooking glow effect
+        const glow=this.add.circle(px,py,20,0xFF6D00,0.04).setDepth(3);
+        this.tweens.add({targets:glow,alpha:0.08,yoyo:true,repeat:-1,duration:800});
+        pot.glow=glow;
+        return pot;
+    }
     _createChestVisual(px,py){
         let chest;
         if(this.textures.exists('sprite_chest')){chest=this.add.image(px,py,'sprite_chest').setDepth(4).setDisplaySize(TILE*1.2,TILE*1.2);}
@@ -864,6 +916,82 @@ class GameScene extends Phaser.Scene {
         const label=this.add.text(px,py-TILE*0.6,'📦',{fontSize:'14px'}).setOrigin(0.5).setDepth(5);
         chest.label=label;
         return chest;
+    }
+
+    // ===== Buff System =====
+    applyBuff(def){
+        const p=this.player,dur=(def.buffDur||30)*1000;
+        const applyOne=(type)=>{
+            if(type==='speed'){
+                const origSpd=D.PLAYER.SPEED,origSpr=D.PLAYER.SPRINT_SPEED;
+                p.speed=Math.floor(origSpd*(def.buffMult||1.3));
+                this.showFloatingText(p.x,p.y-35,'💨 速度提升!','#42A5F5');
+                this.time.delayedCall(dur,()=>{p.speed=origSpd;this.showFloatingText(p.x,p.y-20,'速度恢復','#999');});
+            }else if(type==='attack'){
+                const origAtk=p.atk;
+                p.atk=Math.floor(p.atk*(def.buffMult||1.5));
+                this.showFloatingText(p.x,p.y-35,'💪 攻擊提升!','#FF5252');
+                this.time.delayedCall(dur,()=>{p.atk=origAtk;this.showFloatingText(p.x,p.y-20,'攻擊恢復','#999');});
+            }else if(type==='defense'){
+                const origDef=p.def;
+                p.def+=(def.buffVal||10);
+                this.showFloatingText(p.x,p.y-35,'🛡️ 防禦提升!','#8D6E63');
+                this.time.delayedCall(dur,()=>{p.def=origDef;this.showFloatingText(p.x,p.y-20,'防禦恢復','#999');});
+            }else if(type==='all'){
+                const origSpd=p.speed,origAtk=p.atk,origDef=p.def;
+                p.speed=Math.floor(p.speed*(def.buffMult||1.3));
+                p.atk=Math.floor(p.atk*(def.buffMult||1.3));
+                p.def+=(def.buffVal||8);
+                this.showFloatingText(p.x,p.y-35,'✨ 全能增益!','#FFD54F');
+                this.time.delayedCall(dur,()=>{p.speed=origSpd;p.atk=origAtk;p.def=origDef;this.showFloatingText(p.x,p.y-20,'增益結束','#999');});
+            }
+        };
+        applyOne(def.buff);
+    }
+
+    // ===== Cooking Pot =====
+    getNearCookingPot(){return this.cookingPots?this.cookingPots.find(cp=>dist({x:cp.x,y:cp.y},this.player)<60):null;}
+    cookWithPot(pot){
+        if(pot.slots.length<3){this.showFloatingText(this.player.x,this.player.y-20,'需要放入3格食材','#FF9800');return false;}
+        // Sort slots to match recipes regardless of order
+        const sorted=[...pot.slots].sort();
+        const recipe=D.COOKING_RECIPES.find(r=>{const rs=[...r.slots].sort();return rs.length===sorted.length&&rs.every((v,i)=>v===sorted[i]);});
+        if(!recipe){this.showFloatingText(this.player.x,this.player.y-20,'無法烹飪此組合','#FF5252');return false;}
+        // Check inventory space
+        const def=D.ITEMS[recipe.result];
+        const inv=this.player.inventory;
+        const ex=inv.find(s=>s.id===recipe.result&&s.qty<def.stack);
+        if(!ex&&inv.length>=D.PLAYER.INV_SIZE){this.showFloatingText(this.player.x,this.player.y-20,'背包已滿!','#FF5252');return false;}
+        // Consume slots
+        pot.slots=[];
+        this.addItem(recipe.result,recipe.qty);
+        this.showFloatingText(this.player.x,this.player.y-20,`烹飪 ${recipe.name} x${recipe.qty}!`,'#FF9800');
+        AudioMgr.playCraft();
+        // Sync in multiplayer
+        if(this.isMulti&&!this.isHost)NetMgr.sendToHost({act:'pot_sync',pid:pot.placeId,slots:pot.slots});
+        return true;
+    }
+    addToPot(pot,slot){
+        if(pot.slots.length>=3){this.showFloatingText(this.player.x,this.player.y-20,'鍋已滿(3格)','#FF9800');return false;}
+        const item=this.player.inventory[slot];if(!item)return false;
+        pot.slots.push(item.id);
+        item.qty--;if(item.qty<=0)this.player.inventory.splice(slot,1);
+        this.showFloatingText(this.player.x,this.player.y-20,`放入 ${D.ITEMS[pot.slots[pot.slots.length-1]].name}`,'#FF9800');
+        AudioMgr.playPlace();
+        if(this.isMulti&&!this.isHost)NetMgr.sendToHost({act:'pot_sync',pid:pot.placeId,slots:pot.slots});
+        return true;
+    }
+    removeFromPot(pot,idx){
+        if(idx<0||idx>=pot.slots.length)return false;
+        const itemId=pot.slots[idx];
+        if(this.addItem(itemId,1)){
+            pot.slots.splice(idx,1);
+            this.showFloatingText(this.player.x,this.player.y-20,`取回 ${D.ITEMS[itemId].name}`,'#81C784');
+            if(this.isMulti&&!this.isHost)NetMgr.sendToHost({act:'pot_sync',pid:pot.placeId,slots:pot.slots});
+            return true;
+        }
+        this.showFloatingText(this.player.x,this.player.y-20,'背包已滿!','#FF5252');
+        return false;
     }
 
     // ===== Crafting =====
@@ -1074,6 +1202,7 @@ class GameScene extends Phaser.Scene {
             if(Phaser.Input.Keyboard.JustDown(this.keys.c))this.events.emit('toggleCrafting');
             if(Phaser.Input.Keyboard.JustDown(this.keys.f)){if(p.inventory.length>0)this.useItem(0);}
             if(Phaser.Input.Keyboard.JustDown(this.keys.r))this.events.emit('toggleChest');
+            if(Phaser.Input.Keyboard.JustDown(this.keys.t))this.events.emit('toggleCookingPot');
         }
         // Mobile joystick via UIScene
         if(this.moveVec.x!==0||this.moveVec.y!==0){vx=this.moveVec.x;vy=this.moveVec.y;}
@@ -1118,8 +1247,8 @@ class GameScene extends Phaser.Scene {
             else{dino.setAlpha(1);dino.body.enable=true;if(dino.hpBg)dino.hpBg.setAlpha(1);if(dino.hpBar)dino.hpBar.setAlpha(1);if(dino.nameTxt)dino.nameTxt.setAlpha(1);if(dino.shadow)dino.shadow.setAlpha(0.15);}
 
             // Find nearest player
-            let nearP=p,nearD=dist(dino,p);
-            allPlayers.forEach(ap=>{const dd=dist(dino,ap);if(dd<nearD){nearD=dd;nearP=ap;}});
+            let nearP=allPlayers[0],nearD=dist(dino,allPlayers[0]);
+            for(let ai=1;ai<allPlayers.length;ai++){const dd=dist(dino,allPlayers[ai]);if(dd<nearD){nearD=dd;nearP=allPlayers[ai];}}
             const d=nearD,data=dino.dinoData;
             const nearInCamp=this.isInCamp(nearP.x,nearP.y);
             const nightMult=(isNight&&data.nightBuff)?1.5:1;
@@ -1253,10 +1382,14 @@ class UIScene extends Phaser.Scene {
         // Chest panel
         this.chestPanel=this.add.container(w/2,h/2).setDepth(200).setVisible(false).setScrollFactor(0);
         this.showChest=false;
+        // Cooking pot panel
+        this.potPanel=this.add.container(w/2,h/2).setDepth(200).setVisible(false).setScrollFactor(0);
+        this.showPot=false;
 
         this.gs.events.on('toggleInventory',()=>this.toggleInventory());
         this.gs.events.on('toggleCrafting',()=>this.toggleCrafting());
         this.gs.events.on('toggleChest',()=>this.toggleChest());
+        this.gs.events.on('toggleCookingPot',()=>this.toggleCookingPot());
     }
 
     // ===== Mobile: Virtual Joystick + Action Buttons =====
@@ -1334,32 +1467,40 @@ class UIScene extends Phaser.Scene {
         this.add.text(btnR-65,btnBot-38,'儲藏',{fontSize:'9px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
         chestBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleChest();});
 
+        // Cooking pot button
+        const potBtn=this.add.circle(btnR-65,btnBot-110,22,0xE65100,0.8).setStrokeStyle(2,0xFFFFFF,0.4).setScrollFactor(0).setDepth(115).setInteractive();
+        this.add.text(btnR-65,btnBot-110,'🍲',{fontSize:'18px'}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        this.add.text(btnR-65,btnBot-88,'烹飪',{fontSize:'9px',fill:'#fff',fontFamily:'Arial',stroke:'#000',strokeThickness:2}).setOrigin(0.5).setScrollFactor(0).setDepth(116);
+        potBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleCookingPot();});
+
     }
 
     createKeyboardHints(w,h){
-        const hintBg=this.add.rectangle(w-10,h/2,160,180,0x000000,0.5).setOrigin(1,0.5).setScrollFactor(0).setDepth(99);
         const hints=[
             'WASD — 移動',
             'Shift — 奔跑',
-            '空白鍵 — 攻擊/採集',
-            'E — 採集資源',
+            'Space — 攻擊/採集',
             'I — 背包',
             'C — 合成',
             'F — 使用物品',
-            'R — 儲藏箱'
+            'R — 儲藏箱',
+            'T — 烹飪鍋'
         ];
+        const hh=hints.length*20+20;
+        this.add.rectangle(w-10,h/2,155,hh,0x000000,0.5).setOrigin(1,0.5).setScrollFactor(0).setDepth(99);
         hints.forEach((txt,i)=>{
-            this.add.text(w-90,h/2-70+i*20,txt,{fontSize:'11px',fill:'#81C784',fontFamily:'Arial',stroke:'#000',strokeThickness:1}).setOrigin(0.5).setScrollFactor(0).setDepth(100);
+            this.add.text(w-88,h/2-(hh/2)+12+i*20,txt,{fontSize:'11px',fill:'#81C784',fontFamily:'Arial',stroke:'#000',strokeThickness:1}).setOrigin(0.5).setScrollFactor(0).setDepth(100);
         });
-        this.add.text(w-90,h/2+100,'按鍵提示',{fontSize:'10px',fill:'#555',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(100);
+        this.add.text(w-88,h/2+hh/2-6,'按鍵提示',{fontSize:'10px',fill:'#555',fontFamily:'Arial'}).setOrigin(0.5).setScrollFactor(0).setDepth(100);
     }
 
-    toggleInventory(){this.showInv=!this.showInv;this.showCraft=false;this.showChest=false;this.craftPanel.setVisible(false);this.chestPanel.setVisible(false);if(this.showInv)this.buildInventoryPanel();this.invPanel.setVisible(this.showInv);}
-    toggleCrafting(){this.showCraft=!this.showCraft;this.showInv=false;this.showChest=false;this.invPanel.setVisible(false);this.chestPanel.setVisible(false);this.craftPage=0;if(this.showCraft)this.buildCraftPanel();this.craftPanel.setVisible(this.showCraft);}
+    _hideAllPanels(){this.showInv=false;this.showCraft=false;this.showChest=false;this.showPot=false;this.invPanel.setVisible(false);this.craftPanel.setVisible(false);this.chestPanel.setVisible(false);this.potPanel.setVisible(false);}
+    toggleInventory(){const was=this.showInv;this._hideAllPanels();this.showInv=!was;if(this.showInv)this.buildInventoryPanel();this.invPanel.setVisible(this.showInv);}
+    toggleCrafting(){const was=this.showCraft;this._hideAllPanels();this.showCraft=!was;this.craftPage=0;if(this.showCraft)this.buildCraftPanel();this.craftPanel.setVisible(this.showCraft);}
     toggleChest(){
         const ch=this.gs.getNearChest();
-        if(!ch){this.gs.showFloatingText(this.gs.player.x,this.gs.player.y-20,'附近沒有儲藏箱','#FF9800');this.showChest=false;this.chestPanel.setVisible(false);return;}
-        this.showChest=!this.showChest;this.showInv=false;this.showCraft=false;this.invPanel.setVisible(false);this.craftPanel.setVisible(false);
+        if(!ch){this.gs.showFloatingText(this.gs.player.x,this.gs.player.y-20,'附近沒有儲藏箱','#FF9800');return;}
+        const was=this.showChest;this._hideAllPanels();this.showChest=!was;
         if(this.showChest)this.buildChestPanel(ch);this.chestPanel.setVisible(this.showChest);
     }
     buildChestPanel(chest){
@@ -1401,6 +1542,81 @@ class UIScene extends Phaser.Scene {
             this.chestPanel.add(this.add.text(sx+slotSize/2-6,sy+slotSize/2-6,`${item.qty}`,{fontSize:fs(10)+'px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(1,1));
             const idx=i;bg.on('pointerdown',()=>{AudioMgr.playClick();this.gs.depositToChest(chest,idx);this.buildChestPanel(chest);});
         }
+    }
+
+    toggleCookingPot(){
+        const cp=this.gs.getNearCookingPot();
+        if(!cp){this.gs.showFloatingText(this.gs.player.x,this.gs.player.y-20,'附近沒有烹飪鍋','#FF9800');this.showPot=false;this.potPanel.setVisible(false);return;}
+        this.showPot=!this.showPot;this.showInv=false;this.showCraft=false;this.showChest=false;
+        this.invPanel.setVisible(false);this.craftPanel.setVisible(false);this.chestPanel.setVisible(false);
+        if(this.showPot)this.buildCookingPotPanel(cp);this.potPanel.setVisible(this.showPot);
+    }
+    buildCookingPotPanel(pot){
+        this.potPanel.removeAll(true);
+        const w=this.cameras.main.width,h=this.cameras.main.height;
+        const pw=Math.min(340,w*0.9),ph=Math.min(440,h*0.7);
+        const fs=(base)=>this._mob?Math.max(base,Math.floor(base*1.3)):base;
+        this.potPanel.add(this.add.rectangle(0,0,pw,ph,0x1a1a1a,0.94).setStrokeStyle(2,0xFF6D00));
+        this.potPanel.add(this.add.text(0,-ph/2+18,'🍲 烹飪鍋',{fontSize:fs(16)+'px',fill:'#FF9800',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5));
+        const closeBtn=this.add.text(pw/2-20,-ph/2+12,'✕',{fontSize:fs(20)+'px',fill:'#ff5252',fontFamily:'Arial'}).setOrigin(0.5).setInteractive();
+        closeBtn.on('pointerdown',()=>{AudioMgr.playClick();this.toggleCookingPot();});this.potPanel.add(closeBtn);
+        // 3 ingredient slots
+        this.potPanel.add(this.add.text(0,-ph/2+42,'放入食材 (3格):',{fontSize:fs(12)+'px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(0.5));
+        const slotSize=60,gap=10,startX=-((3*slotSize+2*gap)/2)+slotSize/2,slotY=-ph/2+80;
+        for(let i=0;i<3;i++){
+            const sx=startX+i*(slotSize+gap);
+            const bg=this.add.rectangle(sx,slotY,slotSize,slotSize,0x4E342E,0.9).setStrokeStyle(2,0xFF6D00).setInteractive();
+            this.potPanel.add(bg);
+            if(i<pot.slots.length){
+                const itemId=pot.slots[i],def=D.ITEMS[itemId];
+                this.potPanel.add(this.add.text(sx,slotY-6,def.name,{fontSize:fs(13)+'px',fill:'#fff',fontFamily:'Arial'}).setOrigin(0.5));
+                const idx=i;bg.on('pointerdown',()=>{AudioMgr.playClick();this.gs.removeFromPot(pot,idx);this.buildCookingPotPanel(pot);});
+            }else{
+                this.potPanel.add(this.add.text(sx,slotY,'空',{fontSize:fs(12)+'px',fill:'#666',fontFamily:'Arial'}).setOrigin(0.5));
+            }
+        }
+        // Cook button
+        const canCook=pot.slots.length===3;
+        // Check recipe match
+        const sorted=[...pot.slots].sort();
+        const matchRecipe=canCook?D.COOKING_RECIPES.find(r=>{const rs=[...r.slots].sort();return rs.length===sorted.length&&rs.every((v,i)=>v===sorted[i]);}):null;
+        const cookBtnY=slotY+slotSize/2+20;
+        const cookBg=this.add.rectangle(0,cookBtnY,pw*0.5,38,canCook&&matchRecipe?0x2E7D32:0x333333,0.9).setStrokeStyle(1,canCook&&matchRecipe?0x4CAF50:0x555);
+        this.potPanel.add(cookBg);
+        if(canCook&&matchRecipe){
+            cookBg.setInteractive();
+            this.potPanel.add(this.add.text(0,cookBtnY,`烹飪 → ${matchRecipe.name}`,{fontSize:fs(14)+'px',fill:'#FFD54F',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5));
+            cookBg.on('pointerdown',()=>{AudioMgr.playClick();this.gs.cookWithPot(pot);this.buildCookingPotPanel(pot);});
+        }else{
+            this.potPanel.add(this.add.text(0,cookBtnY,canCook?'❌ 無匹配食譜':'放入3格食材',{fontSize:fs(13)+'px',fill:'#888',fontFamily:'Arial'}).setOrigin(0.5));
+        }
+        // Recipe list
+        const recipeStartY=cookBtnY+35;
+        this.potPanel.add(this.add.text(0,recipeStartY,'📖 食譜:',{fontSize:fs(12)+'px',fill:'#81C784',fontFamily:'Arial',fontStyle:'bold'}).setOrigin(0.5));
+        const recipes=D.COOKING_RECIPES;
+        const rowH=32;
+        recipes.forEach((r,i)=>{
+            const ry=recipeStartY+18+i*rowH;
+            if(ry>ph/2-10)return;
+            const mats=r.slots.map(s=>D.ITEMS[s]?.name||s).join(' + ');
+            this.potPanel.add(this.add.text(-pw/2+14,ry,`${r.name}: ${mats}`,{fontSize:fs(10)+'px',fill:'#aaa',fontFamily:'Arial'}));
+            this.potPanel.add(this.add.text(pw/2-14,ry,r.desc,{fontSize:fs(10)+'px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(1,0));
+        });
+        // Player inventory for adding
+        const invY=recipeStartY+18+Math.min(recipes.length,8)*rowH+10;
+        this.potPanel.add(this.add.text(-pw/2+14,invY,'背包食材 (點擊放入):',{fontSize:fs(11)+'px',fill:'#81C784',fontFamily:'Arial'}));
+        const inv=this.gs.player.inventory;
+        const foodItems=inv.map((item,idx)=>({item,idx,def:D.ITEMS[item.id]})).filter(x=>x.def&&(x.def.type==='food'||x.def.type==='resource'));
+        const cols=5,ss=Math.floor((pw-20)/cols);
+        const sStartX=-cols*ss/2+ss/2,sStartY=invY+18;
+        foodItems.slice(0,10).forEach((fi,i)=>{
+            const col=i%cols,row=Math.floor(i/cols),sx=sStartX+col*ss,sy=sStartY+row*ss;
+            const bg=this.add.rectangle(sx,sy,ss-4,ss-4,0x333333,0.8).setStrokeStyle(1,0x4CAF50).setInteractive();
+            this.potPanel.add(bg);
+            this.potPanel.add(this.add.text(sx,sy-8,fi.def.name.substring(0,3),{fontSize:fs(11)+'px',fill:'#fff',fontFamily:'Arial'}).setOrigin(0.5));
+            this.potPanel.add(this.add.text(sx+ss/2-6,sy+ss/2-6,`${fi.item.qty}`,{fontSize:fs(10)+'px',fill:'#FFD54F',fontFamily:'Arial'}).setOrigin(1,1));
+            bg.on('pointerdown',()=>{AudioMgr.playClick();this.gs.addToPot(pot,fi.idx);this.buildCookingPotPanel(pot);});
+        });
     }
 
     buildInventoryPanel(){
