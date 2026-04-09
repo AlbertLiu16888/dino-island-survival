@@ -1,0 +1,78 @@
+分類,功能名稱,狀態,版本,優先級,複雜度,影響檔案,說明,備註
+===版本歷史===,,,,,,,,
+版本,v3.3 烹飪鍋+Buff系統,完成,v3.3,—,—,data+game+sprites,烹飪鍋3格配方+特殊果實+Buff系統,a1ac398
+版本,v3.4 無縫地圖渲染,完成,v3.4,—,—,tiles+game,Domain warping消除格子感,552c5cf
+版本,v3.5 恐龍攻擊優化+UI,完成,v3.5,—,—,game,Super armor+smartAction+按鈕整合,e55530d
+版本,v3.6 多人連線2-6人,完成,v3.6,—,—,network+game,TURN relay+重試+late join,35223fd
+版本,v3.7 HP同步+戰鬥特效,完成,v3.7,—,—,game,Client HP sync+特效廣播+無敵安全閥,dd3f459
+版本,v3.8 夜間挑戰系統,完成,v3.8,—,—,data+game+sprites,蛋收集+迅猛龍狩獵+計分+獎勵,32c7784
+===核心系統===,,,,,,,,
+系統,日夜循環,完成,v3.0,—,—,game,DAY120s+DUSK30s+NIGHT90s,影響恐龍+視野
+系統,飢餓系統,完成,v3.0,—,—,game,自動扣飢餓+飽食回血+餓死扣血,
+系統,合成系統,完成,v3.0,—,—,data+game,營火旁合成武器/防具/工具,
+系統,烹飪鍋,完成,v3.3,—,—,data+game,3格食材配方匹配,
+系統,Buff系統,完成,v3.3,—,—,game,speed/attack/defense/all定時Buff,
+系統,背包系統,完成,v3.0,—,—,game,20格+疊加99+快捷欄5格,
+系統,儲藏箱,完成,v3.0,—,—,game,放置後共享20格+多人同步,
+系統,放置物,完成,v3.0,—,—,game,營火/火把/陷阱/烹飪鍋/儲藏箱,
+系統,夜間挑戰,完成,v3.8,—,—,data+game+sprites,蛋收集+迅猛龍狩獵+計分排名+獎勵,
+系統,多人連線,完成,v3.6,—,—,network+game,PeerJS P2P 2-6人 host-authority,
+系統,恐龍AI,完成,v3.5,—,—,game,patrol→chase→attack狀態機+超級護甲,
+系統,戰鬥系統,完成,v3.7,—,—,game,近戰+遠程+特效廣播+HP同步,
+===物品清單===,,,,,,,,
+物品,木材 wood,完成,v3.0,—,—,data,基礎建材 草原/森林,
+物品,石頭 stone,完成,v3.0,—,—,data,基礎材料 草原/森林/沼澤,
+物品,草藥 herb,完成,v3.0,—,—,data,藥用植物 草原/森林/沼澤,
+物品,鐵礦 iron,完成,v3.0,—,—,data,金屬礦石 沼澤/火山,
+物品,野果 fruit,完成,v3.0,—,—,data,飢餓+8,
+物品,速度果實,完成,v3.3,—,—,data,速度+30% 30秒,
+物品,力量果實,完成,v3.3,—,—,data,攻擊+50% 30秒,
+物品,堅硬果實,完成,v3.3,—,—,data,防禦+10 30秒,
+物品,石斧,完成,v3.0,—,—,data,ATK+8 木3石2,
+物品,石矛,完成,v3.0,—,—,data,ATK+10 木4石3,
+物品,鐵斧,完成,v3.0,—,—,data,ATK+18 木2鐵6,
+物品,鐵矛,完成,v3.0,—,—,data,ATK+22 木3鐵8,
+物品,簡易弓,完成,v3.0,—,—,data,遠程ATK+6 木5皮2,
+物品,草甲,完成,v3.0,—,—,data,DEF+3 草藥10,
+物品,皮甲,完成,v3.0,—,—,data,DEF+8 皮8骨2,
+物品,鐵甲,完成,v3.0,—,—,data,DEF+15 鐵12皮4,
+物品,金骨頭,完成,v3.8,—,—,data,夜間挑戰冠軍獎勵,可合成稀有裝備(未實裝)
+物品,恐龍蛋,完成,v3.8,—,—,data,夜間挑戰收集品,不可使用
+===恐龍清單===,,,,,,,,
+恐龍,迅猛龍 raptor,完成,v3.0,—,—,data+sprites,HP30 ATK12 群體3 夜間增強,草原/森林/沼澤
+恐龍,竊蛋龍 oviraptor,完成,v3.0,—,—,data+sprites,HP20 ATK5 逃跑型,草原/森林
+恐龍,三角龍 trike,完成,v3.0,—,—,data+sprites,HP80 ATK20 被動型,草原
+恐龍,劍龍 stego,完成,v3.0,—,—,data+sprites,HP70 ATK15 反傷30%,森林
+恐龍,雙脊龍 dilopho,完成,v3.0,—,—,data+sprites,HP35 ATK15 毒性,沼澤
+恐龍,異特龍 allo,完成,v3.0,—,—,data+sprites,HP150 ATK35 夜行性+夜增強,森林/沼澤
+恐龍,暴龍 trex,完成,v3.0,—,—,data+sprites,HP200 ATK45 Boss,火山
+恐龍,棘龍 spino,完成,v3.0,—,—,data+sprites,HP180 ATK40 Boss,沼澤
+===未來計劃===,,,,,,,,
+計劃,經驗值/等級系統,未開始,v3.9,高,中,data+game,擊殺得XP升級解鎖配方,
+計劃,小地圖,未開始,v3.9,高,中,game(UI),右下角顯示位置/蛋/隊友,
+計劃,更多挑戰類型,未開始,v3.9,高,低,data+game,草藥收集/生存競賽/Boss挑戰,
+計劃,恐龍馴服,未開始,v4.0,高,高,data+game+sprites,餵食→跟隨/騎乘,核心新玩法
+計劃,天氣系統,未開始,v4.1,中,中,tiles+game,雨/霧/風暴影響視野速度,
+計劃,洞穴探索,未開始,v4.2,中,高,data+tiles+game,biome 5地下層級,
+計劃,排行榜,未開始,v4.3,中,高,需後端,全服最佳生存/擊殺排行,
+計劃,建築系統,未開始,v4.4,中,高,data+game+sprites,木牆/石牆/門建築基地,
+計劃,音效強化,未開始,—,低,低,audio,不同恐龍/biome專屬音效,
+計劃,成就系統,未開始,—,低,中,data+game,解鎖成就+稱號,
+計劃,季節系統,未開始,—,低,高,data+tiles+game,春夏秋冬循環影響資源,
+計劃,多地圖,未開始,—,低,中,data+tiles+game,不同島嶼不同恐龍組合,
+===多人同步欄位===,,,,,,,,
+同步,玩家資料 p[],完成,—,—,—,game,id/x/y/hp/hu/fx/fy/a/n/si/ce,30fps廣播
+同步,恐龍資料 d[],完成,—,—,—,game,id/x/y/hp/mhp/k/al/st,30fps廣播
+同步,資源移除 rm[],完成,—,—,—,game,resId陣列,30fps廣播
+同步,放置物 pls[],完成,—,—,—,game,tp/id/x/y 一次性,新增時發送
+同步,儲藏箱 chd[],完成,—,—,—,game,id/x/y/inv,30fps廣播
+同步,烹飪鍋 cpd[],完成,—,—,—,game,id/x/y/sl,30fps廣播
+同步,戰鬥特效 fx[],完成,—,—,—,game,tp/x/y/fx/fy slash/arrow,30fps廣播
+同步,夜間挑戰 nc{},完成,—,—,—,game,tp/sc/eggs,30fps廣播
+同步,挑戰結果 ncr{},完成,—,—,—,game,type/ranking 一次性,結束時發送
+===開發檢查清單===,,,,,,,,
+流程,新增物品,規範,—,—,—,data→items→resources→recipes→sprites→useItem,見CLAUDE.md,
+流程,新增恐龍,規範,—,—,—,data→DINOS→sprites→DINO_SPRITE_KEYS,見CLAUDE.md,
+流程,新增放置物,規範,—,—,—,data→usePlaceable→visual→5點同步,見CLAUDE.md,
+流程,新增挑戰類型,規範,—,—,—,data→TYPES→start/end/update→UI,見CLAUDE.md,
+流程,版本發布,規範,—,—,—,code→?v=→CLAUDE.md→menu→test→commit→push→telegram,見CLAUDE.md,
