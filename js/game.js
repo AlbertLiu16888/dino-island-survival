@@ -107,7 +107,7 @@ class MenuScene extends Phaser.Scene {
             if(this.textures.exists(key))this.add.image(startX+i*(pw+gap),h*0.89,key).setDisplaySize(pw,pw).setAlpha(0.7);
             this.add.text(startX+i*(pw+gap),h*0.89+pw*0.6,biomeLabels[i],{fontSize:'8px',fill:'#777',fontFamily:'Arial'}).setOrigin(0.5);
         });
-        this.add.text(w/2,h*0.97,'v3.3 — 烹飪鍋 | 特殊果實 | 增益效果 | 多人連線',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
+        this.add.text(w/2,h*0.97,'v3.4 — 無縫地圖 | 烹飪鍋 | 特殊果實 | 多人連線',{fontSize:'10px',fill:'#4CAF50',fontFamily:'Arial'}).setOrigin(0.5);
     }
 }
 
@@ -706,11 +706,9 @@ class GameScene extends Phaser.Scene {
         this.renderMap();
     }
     renderMap(){
-        const tileKeys={0:'tile_camp',1:'tile_grass',2:'tile_forest',3:'tile_swamp',4:'tile_volcano'};
-        const transKeys={'1_2':'tile_grass_forest','2_1':'tile_grass_forest','1_3':'tile_grass_swamp','3_1':'tile_grass_swamp','2_3':'tile_forest_swamp','3_2':'tile_forest_swamp','3_4':'tile_swamp_volcano','4_3':'tile_swamp_volcano'};
-        this.groundRT=this.add.renderTexture(0,0,MW,MH).setOrigin(0).setDepth(0);
-        for(let y=0;y<D.MAP.HEIGHT;y+=2)for(let x=0;x<D.MAP.WIDTH;x+=2){const b=this.mapData[y]?.[x]??1,key=tileKeys[b];if(key&&this.textures.exists(key))this.groundRT.draw(key,x*TILE,y*TILE);}
-        for(let y=0;y<D.MAP.HEIGHT;y+=2)for(let x=0;x<D.MAP.WIDTH;x+=2){const b=this.mapData[y]?.[x];if(b===undefined)continue;for(const[ox,oy]of[[2,0],[-2,0],[0,2],[0,-2]]){const nb=this.mapData[y+oy]?.[x+ox];if(nb!==undefined&&nb!==b){const tkey=transKeys[`${b}_${nb}`];if(tkey&&this.textures.exists(tkey)){this.groundRT.draw(tkey,x*TILE,y*TILE);break;}}}}
+        // 全地圖連續噪聲渲染 — 無格子感
+        TileGen.generateMapTexture(this,this.mapData,D.MAP.WIDTH,D.MAP.HEIGHT,TILE);
+        this.add.image(0,0,'ground_map').setOrigin(0).setDepth(0);
         const campCx=MW/2,campCy=MH/2;
         const gfx=this.add.graphics().setDepth(2);gfx.lineStyle(2,0xFFD54F,0.5);gfx.strokeCircle(campCx,campCy,5*TILE);
         for(let a=0;a<360;a+=10){const rad=a*Math.PI/180;gfx.fillStyle(0xFFD54F,0.15);gfx.fillCircle(campCx+Math.cos(rad)*5*TILE,campCy+Math.sin(rad)*5*TILE,3);}
