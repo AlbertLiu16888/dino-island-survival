@@ -177,8 +177,8 @@ class LobbyScene extends Phaser.Scene {
             this.refreshSlotsClient(players);
         };
         NetMgr.onStartGame=(data)=>{
-            // Client receives start signal
-            this.scene.start('Game',{multi:true,isHost:false,mapSeed:data.seed,skinIdx:this._skinIdx,playerName:this._playerName});
+            // Client receives start signal (or late-join signal)
+            this.scene.start('Game',{multi:true,isHost:false,mapSeed:data.seed,skinIdx:this._skinIdx,playerName:this._playerName,lateJoin:data.lateJoin||false});
         };
     }
 
@@ -350,7 +350,10 @@ class GameScene extends Phaser.Scene {
             this.time.addEvent({delay:33,callback:()=>this.broadcastState(),loop:true});
         }else{
             // Client mode
-            NetMgr.onInitData=(data)=>this.applyInitData(data);
+            NetMgr.onInitData=(data)=>{
+                if(data?.t==='init_res')this.applyInitRes(data);
+                else this.applyInitData(data);
+            };
             NetMgr.onStateUpdate=(data)=>this.applyStateUpdate(data);
 
             // Send input at ~30fps
@@ -398,10 +401,16 @@ class GameScene extends Phaser.Scene {
         const trData=this.traps.filter(t=>t.active).map(t=>({tp:'trap',x:Math.round(t.x),y:Math.round(t.y)}));
         const chData=this.chests.map(c=>({tp:'chest',id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),inv:c.inventory}));
         const cpData=this.cookingPots.map(c=>({tp:'pot',id:c.placeId,x:Math.round(c.x),y:Math.round(c.y),sl:c.slots}));
+        // 分批發送避免單包過大
         try{
-            conn.send({t:'init',map:this.mapData,res:resData,dt:Math.round(this.dayTimer),cd:this.currentDay,
+            conn.send({t:'init',map:this.mapData,dt:Math.round(this.dayTimer),cd:this.currentDay,
                 pls:[...cfData,...trData,...chData,...cpData]});
         }catch(e){}
+        // 資源分批 (可能很多)
+        const BATCH=100;
+        for(let i=0;i<resData.length;i+=BATCH){
+            try{conn.send({t:'init_res',res:resData.slice(i,i+BATCH),first:i===0});}catch(e){}
+        }
     }
 
     broadcastState(){
@@ -494,13 +503,22 @@ class GameScene extends Phaser.Scene {
         NetMgr.sendToHost(data);
     }
 
+    applyInitRes(data){
+        if(!data||!data.res)return;
+        if(data.first){this.resources.forEach(r=>r.destroy());this.resources=[];}
+        data.res.forEach(r=>{ this.createResource(r.t,r.x,r.y,r.id); });
+    }
+
     applyInitData(data){
         if(!data)return;
         // Apply map if provided
-        if(data.map)this.mapData=data.map;
-        // Create resources from host data
+        if(data.map){
+            this.mapData=data.map;
+            // 重新渲染地圖 (late joiner 可能 map 不同)
+            TileGen.generateMapTexture(this,this.mapData,D.MAP.WIDTH,D.MAP.HEIGHT,TILE);
+        }
+        // Legacy: inline resources
         if(data.res){
-            // Clear existing
             this.resources.forEach(r=>r.destroy());this.resources=[];
             data.res.forEach(r=>{ this.createResource(r.t,r.x,r.y,r.id); });
         }
@@ -1706,8 +1724,12 @@ class UIScene extends Phaser.Scene {
         if(this._mob&&this.mainBtnIcon){
             let nearRes=false;
             gs.resources.forEach(r=>{if(dist(r,p)<50)nearRes=true;});
-            this.mainBtnIcon.setText(nearRes?'🪓':'⚔️');
-            this.mainBtnLabel.setText(nearRes?'採集':'攻擊');
+            const nearPot=gs.getNearCookingPot();
+            const nearChest=gs.getNearChest();
+            if(nearRes){this.mainBtnIcon.setText('🪓');this.mainBtnLabel.setText('採集');}
+            else if(nearPot){this.mainBtnIcon.setText('🍲');this.mainBtnLabel.setText('烹飪');}
+            else if(nearChest){this.mainBtnIcon.setText('📦');this.mainBtnLabel.setText('儲藏');}
+            else{this.mainBtnIcon.setText('⚔️');this.mainBtnLabel.setText('攻擊');}
         }
 
         // Multiplayer indicator
